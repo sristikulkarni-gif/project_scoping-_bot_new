@@ -1,0 +1,27 @@
+replicaCount: 1
+
+image:
+  repository: qdrant/qdrant
+  pullPolicy: IfNotPresent
+  tag: "latest"
+
+service:
+  type: ClusterIP
+  port: 6333
+  targetPort: 6333
+  grpcPort: 6334
+  grpcTargetPort: 6334
+
+resources:
+  limits:
+    cpu: 1000m
+    memory: 1Gi
+  requests:
+    cpu: 500m
+    memory: 512Mi
+
+# Storage
+persistence:
+  enabled: false  # Set to true and configure PVC for production
+  size: 10Gi
+  storageClass: ""

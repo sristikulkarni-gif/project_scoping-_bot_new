@@ -1,0 +1,38 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "qdrant.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "qdrant.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "qdrant.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "qdrant.selectorLabels" . | nindent 8 }}
+    spec:
+      containers:
+      - name: qdrant
+        image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        ports:
+        - name: http
+          containerPort: {{ .Values.service.targetPort }}
+          protocol: TCP
+        - name: grpc
+          containerPort: {{ .Values.service.grpcTargetPort }}
+          protocol: TCP
+        volumeMounts:
+        - name: qdrant-storage
+          mountPath: /qdrant/storage
+        resources:
+          {{- toYaml .Values.resources | nindent 10 }}
+      volumes:
+      - name: qdrant-storage
+        emptyDir: {}  # For dev - use PersistentVolumeClaim for production
+        # persistentVolumeClaim:
+        #   claimName: {{ include "qdrant.fullname" . }}-pvc

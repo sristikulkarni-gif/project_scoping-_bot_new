@@ -1,0 +1,543 @@
+import React, { useState, useEffect } from 'react';
+import { useParams } from 'react-router-dom';
+import projectApi from '../api/projectApi';
+
+/**
+ * Component to render scope section previews
+ */
+const ScopePreviewTabs = ({ activeTab, parsedDraft }) => {
+  const { id: projectId } = useParams();
+  const [caseStudy, setCaseStudy] = useState(null);
+  const [caseStudyLoading, setCaseStudyLoading] = useState(false);
+  const [caseStudyError, setCaseStudyError] = useState(null);
+
+  // Fetch related case study when tab is active
+  useEffect(() => {
+    if (activeTab === 'related_case_study' && projectId) {
+      const fetchCaseStudy = async () => {
+        try {
+          setCaseStudyLoading(true);
+          setCaseStudyError(null);
+          const response = await projectApi.getRelatedCaseStudy(projectId);
+          setCaseStudy(response.data);
+        } catch (error) {
+          console.error('Failed to fetch related case study:', error);
+          setCaseStudyError(error.response?.data?.detail || 'Failed to load related case study');
+        } finally {
+          setCaseStudyLoading(false);
+        }
+      };
+      fetchCaseStudy();
+    }
+  }, [activeTab, projectId]);
+
+  if (!parsedDraft) {
+    return (
+      <div className="text-center text-gray-500 dark:text-gray-400 py-12">
+        <p>No scope data available. Please finalize the scope first.</p>
+      </div>
+    );
+  }
+
+  // Debug: Log the structure
+  console.log('ScopePreviewTabs - activeTab:', activeTab);
+  console.log('ScopePreviewTabs - parsedDraft keys:', Object.keys(parsedDraft));
+  console.log('ScopePreviewTabs - parsedDraft:', parsedDraft);
+
+  // Helper to render table from array of objects or array of arrays
+  const renderTable = (data, title = '') => {
+    if (!Array.isArray(data) || data.length === 0) {
+      return <div className="text-gray-500 italic">No data available</div>;
+    }
+
+    // Check if data is array of objects
+    if (typeof data[0] === 'object' && !Array.isArray(data[0])) {
+      const headers = Object.keys(data[0]);
+
+      // Check if this is a resourcing plan (has "Cost" column)
+      const isResourcingPlan = headers.includes('Cost') || headers.includes('cost');
+      let totalCost = 0;
+
+      if (isResourcingPlan) {
+        // Calculate total cost
+        data.forEach(row => {
+          const cost = parseFloat(row.Cost || row.cost || 0);
+          if (!isNaN(cost)) {
+            totalCost += cost;
+          }
+        });
+      }
+
+      return (
+        <div className="overflow-x-auto">
+          {title && <h4 className="font-semibold text-gray-800 dark:text-gray-200 mb-2">{title}</h4>}
+          <table className="min-w-full border border-gray-300 dark:border-gray-600">
+            <thead className="bg-gray-100 dark:bg-gray-700">
+              <tr>
+                {headers.map((header, idx) => (
+                  <th key={idx} className="px-4 py-2 text-left text-sm font-semibold text-gray-700 dark:text-gray-200 border-b border-gray-300 dark:border-gray-600">
+                    {header.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {data.map((row, rowIdx) => (
+                <tr key={rowIdx} className="hover:bg-gray-50 dark:hover:bg-gray-800">
+                  {headers.map((header, colIdx) => (
+                    <td key={colIdx} className="px-4 py-2 text-sm text-gray-600 dark:text-gray-400 border-b border-gray-200 dark:border-gray-700">
+                      {typeof row[header] === 'object' ? JSON.stringify(row[header]) : (row[header] !== null && row[header] !== undefined && row[header] !== '') ? String(row[header]) : '-'}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+              {/* Add Total Cost Row for Resourcing Plan */}
+              {isResourcingPlan && (
+                <tr className="bg-blue-50 dark:bg-blue-900/20 font-bold">
+                  {headers.map((header, colIdx) => (
+                    <td key={colIdx} className="px-4 py-3 text-sm border-t-2 border-blue-500 dark:border-blue-400">
+                      {header === 'Resources' || header === 'resources' ? (
+                        <span className="text-blue-900 dark:text-blue-100">Total Project Cost</span>
+                      ) : header === 'Cost' || header === 'cost' ? (
+                        <span className="text-blue-900 dark:text-blue-100">${totalCost.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                      ) : (
+                        <span className="text-gray-400">-</span>
+                      )}
+                    </td>
+                  ))}
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      );
+    }
+
+    // If array of arrays, render as simple table
+    if (Array.isArray(data[0])) {
+      return (
+        <div className="overflow-x-auto">
+          {title && <h4 className="font-semibold text-gray-800 dark:text-gray-200 mb-2">{title}</h4>}
+          <table className="min-w-full border border-gray-300 dark:border-gray-600">
+            <tbody>
+              {data.map((row, rowIdx) => (
+                <tr key={rowIdx} className={rowIdx === 0 ? "bg-gray-100 dark:bg-gray-700" : "hover:bg-gray-50 dark:hover:bg-gray-800"}>
+                  {row.map((cell, cellIdx) => (
+                    <td key={cellIdx} className={`px-4 py-2 text-sm ${rowIdx === 0 ? 'font-semibold text-gray-700 dark:text-gray-200' : 'text-gray-600 dark:text-gray-400'} border-b border-gray-200 dark:border-gray-700`}>
+                      {String(cell || '-')}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      );
+    }
+
+    // Fallback: render as list
+    return (
+      <ul className="list-disc list-inside space-y-1 ml-4">
+        {data.map((item, idx) => (
+          <li key={idx} className="text-gray-600 dark:text-gray-400">
+            {String(item)}
+          </li>
+        ))}
+      </ul>
+    );
+  };
+
+  const renderValue = (value, depth = 0) => {
+    if (value === null || value === undefined || value === '') return null;
+
+    // Prevent infinite recursion
+    if (depth > 5) {
+      return <span className="text-gray-500 italic">...</span>;
+    }
+
+    if (Array.isArray(value)) {
+      if (value.length === 0) return <span className="text-gray-500 italic">None</span>;
+
+      // Check if this looks like tabular data
+      if (value.length > 0 && typeof value[0] === 'object') {
+        return renderTable(value);
+      }
+
+      return (
+        <ul className="list-disc list-inside space-y-1 ml-4">
+          {value.map((item, idx) => (
+            <li key={idx} className="text-gray-600 dark:text-gray-400">
+              {typeof item === 'object' ? renderValue(item, depth + 1) : String(item)}
+            </li>
+          ))}
+        </ul>
+      );
+    } else if (typeof value === 'object') {
+      return (
+        <div className="ml-4 mt-2 space-y-2">
+          {Object.entries(value).map(([k, v]) => {
+            if (v === null || v === undefined || v === '') return null;
+            return (
+              <div key={k} className="flex gap-2">
+                <span className="font-medium text-gray-700 dark:text-gray-300 min-w-[150px]">
+                  {k.replace(/_/g, ' ')}:
+                </span>
+                <div className="flex-1">{renderValue(v, depth + 1)}</div>
+              </div>
+            );
+          })}
+        </div>
+      );
+    } else {
+      return <span className="text-gray-600 dark:text-gray-400">{String(value)}</span>;
+    }
+  };
+
+  const renderSection = (data, isTableSection = false, isImageSection = false) => {
+    if (!data) {
+      return <div className="text-gray-500 italic">No data available</div>;
+    }
+
+    // Special rendering for overview tab - show as table for better space utilization
+    if (activeTab === 'overview' && typeof data === 'object' && !Array.isArray(data)) {
+      return (
+        <div className="overflow-x-auto">
+          <table className="min-w-full border border-gray-300 dark:border-gray-600">
+            <thead className="bg-gray-100 dark:bg-gray-700">
+              <tr>
+                <th className="px-4 py-2 text-left text-sm font-semibold text-gray-700 dark:text-gray-200 border-b border-gray-300 dark:border-gray-600 w-1/3">
+                  Field
+                </th>
+                <th className="px-4 py-2 text-left text-sm font-semibold text-gray-700 dark:text-gray-200 border-b border-gray-300 dark:border-gray-600 w-2/3">
+                  Value
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {Object.entries(data).map(([key, value], idx) => (
+                <tr key={idx} className="hover:bg-gray-50 dark:hover:bg-gray-800">
+                  <td className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 border-b border-gray-200 dark:border-gray-700">
+                    {key.replace(/_/g, ' ')}
+                  </td>
+                  <td className="px-4 py-2 text-sm text-gray-600 dark:text-gray-400 border-b border-gray-200 dark:border-gray-700">
+                    {typeof value === 'object' ? JSON.stringify(value) : String(value || '-')}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      );
+    }
+
+    // Special rendering for cost projection - show total_cost prominently at the top
+    if (activeTab === 'costing' && typeof data === 'object' && !Array.isArray(data)) {
+      const formatCurrency = (amount) => {
+        if (typeof amount === 'number') {
+          return `$${amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+        }
+        return amount;
+      };
+
+      return (
+        <div className="space-y-6">
+          {/* Total Cost - Prominently displayed at top */}
+          {data.total_cost !== undefined && (
+            <div className="bg-emerald-50 dark:bg-emerald-900/20 border-2 border-emerald-500 rounded-lg p-6 mb-6">
+              <h3 className="text-2xl font-bold text-emerald-700 dark:text-emerald-400 mb-2">
+                Total Project Cost
+              </h3>
+              <p className="text-4xl font-bold text-emerald-900 dark:text-emerald-300">
+                {formatCurrency(data.total_cost)}
+              </p>
+              {data.currency && (
+                <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
+                  Currency: {data.currency}
+                </p>
+              )}
+              {data.discount_percentage > 0 && (
+                <p className="text-sm text-emerald-700 dark:text-emerald-400 mt-2">
+                  ✓ Includes {data.discount_percentage}% discount ({formatCurrency(data.discount_amount)} off)
+                </p>
+              )}
+            </div>
+          )}
+
+          {/* Render rest of cost breakdown */}
+          {Object.entries(data).map(([key, value]) => {
+            if (value === null || value === undefined || value === '') return null;
+            // Skip total_cost, currency, discount fields as they're shown above
+            if (key === 'total_cost' || key === 'currency' || key === 'discount_percentage' || key === 'discount_amount') return null;
+
+            return (
+              <div key={key} className="border-b border-gray-200 dark:border-gray-700 pb-4 last:border-0">
+                <h4 className="text-lg font-semibold text-gray-800 dark:text-gray-200 mb-3">
+                  {key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
+                </h4>
+                <div className="ml-4">
+                  {renderValue(value)}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      );
+    }
+
+    // If this is an image section and data is a string (file path), render as image
+    if (isImageSection && typeof data === 'string') {
+      // Check if it's a valid image path
+      if (data.match(/\.(png|jpg|jpeg|gif|svg|webp)$/i)) {
+        // Construct proper API URL for blob storage
+        // Image path format: "projects/PROJECT_ID/filename.png"
+        // const apiBaseUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+        // const imageUrl = data.startsWith('http')
+        //   ? data
+        //   : `${apiBaseUrl}/api/blobs/download/${data}?base=projects`;
+        const imageUrl = `/api/blobs/download/${data}?base=projects`;
+
+        console.log('🖼️ Architecture image path:', data);
+        console.log('🖼️ Constructed image URL:', imageUrl);
+        // console.log('🖼️ API Base URL:', apiBaseUrl);
+
+        return (
+          <div className="flex flex-col items-center justify-center p-4">
+            <img
+              src={imageUrl}
+              alt="Architecture Diagram"
+              className="max-w-full h-auto border border-gray-300 dark:border-gray-600 rounded-lg shadow-lg"
+              onLoad={() => console.log('✅ Image loaded successfully')}
+              onError={(e) => {
+                console.error('❌ Image failed to load:', imageUrl);
+                e.target.onerror = null;
+                e.target.src = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300"><rect width="400" height="300" fill="%23f3f4f6"/><text x="50%" y="50%" text-anchor="middle" fill="%236b7280" font-family="Arial" font-size="16">Image not available</text></svg>';
+              }}
+            />
+            <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">
+              {data.split('/').pop()}
+            </p>
+          </div>
+        );
+      }
+      // If it's a string but not an image path, just show it as text
+      return <div className="text-gray-600 dark:text-gray-400">{data}</div>;
+    }
+
+    if (typeof data !== 'object') {
+      return <div className="text-gray-500 italic">No data available</div>;
+    }
+
+    // If this is marked as a table section and data is an array, render as table
+    if (isTableSection && Array.isArray(data)) {
+      return renderTable(data);
+    }
+
+    // If data is an array of objects at top level, render as table
+    if (Array.isArray(data) && data.length > 0 && typeof data[0] === 'object') {
+      return renderTable(data);
+    }
+
+    return (
+      <div className="space-y-6">
+        {Object.entries(data).map(([key, value]) => {
+          if (value === null || value === undefined || value === '') return null;
+
+          return (
+            <div key={key} className="border-b border-gray-200 dark:border-gray-700 pb-4 last:border-0">
+              <h4 className="text-lg font-semibold text-gray-800 dark:text-gray-200 mb-3">
+                {key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
+              </h4>
+              <div className="ml-4">
+                {renderValue(value)}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
+  const getSectionData = () => {
+    // Try multiple field name variations (case-insensitive)
+    const findField = (...names) => {
+      for (const name of names) {
+        // Try exact match
+        if (parsedDraft[name]) {
+          console.log(`✓ Found exact match for "${name}"`);
+          return parsedDraft[name];
+        }
+
+        // Try case-insensitive match
+        const lowerName = name.toLowerCase();
+        const foundKey = Object.keys(parsedDraft).find(k => k.toLowerCase() === lowerName);
+        if (foundKey && parsedDraft[foundKey]) {
+          console.log(`✓ Found case-insensitive match: "${foundKey}" for search term "${name}"`);
+          return parsedDraft[foundKey];
+        }
+      }
+
+      // Try partial match as last resort (contains the key words)
+      for (const name of names) {
+        const searchTerms = name.toLowerCase().split(/[\s_-]+/);
+        const foundKey = Object.keys(parsedDraft).find(k => {
+          const keyLower = k.toLowerCase();
+          return searchTerms.every(term => keyLower.includes(term));
+        });
+        if (foundKey && parsedDraft[foundKey]) {
+          console.log(`✓ Found partial match: "${foundKey}" for search terms "${name}"`);
+          return parsedDraft[foundKey];
+        }
+      }
+
+      console.log(`✗ No match found for any of: ${names.join(', ')}`);
+      return null;
+    };
+
+    let sectionData = null;
+
+    switch (activeTab) {
+      case 'overview':
+        sectionData = findField('overview', 'project_overview', 'Overview', 'Project Overview', 'project overview');
+        break;
+      case 'activities':
+        sectionData = findField('activities', 'activities_breakdown', 'Activities Breakdown', 'Activities', 'activity_breakdown', 'activities breakdown');
+        break;
+      case 'resourcing':
+        // Try resourcing_plan FIRST (most specific), then resourcing (might be empty)
+        sectionData = findField('resourcing_plan', 'Resourcing Plan', 'resourcing', 'Resourcing', 'resource_plan', 'resources', 'resourcing plan');
+        break;
+      case 'architecture':
+        sectionData = findField('architecture_diagram', 'architecture', 'Architecture', 'Architecture Diagram', 'Architecture diagram', 'arch_diagram', 'architecture diagram', 'system architecture', 'technical architecture');
+        break;
+      case 'costing':
+        sectionData = findField('cost', 'cost_projection', 'costing', 'Cost Projection', 'cost_breakdown', 'pricing', 'Costing', 'costs', 'budget', 'cost projection', 'financial projection', 'cost estimate');
+        break;
+      case 'summary':
+        // Try project_summary FIRST (most specific), also try risks as fallback
+        sectionData = findField('project_summary', 'summary', 'risks', 'Summary', 'Summery', 'Project Summary', 'executive_summary', 'project summary');
+        break;
+      default:
+        sectionData = null;
+    }
+
+    console.log('ScopePreviewTabs - sectionData for', activeTab, ':', sectionData);
+
+    // If no section-specific data, check if parsedDraft itself might be the section
+    if (!sectionData && activeTab === 'overview') {
+      sectionData = parsedDraft;
+    }
+
+    return sectionData;
+  };
+
+  const sectionData = getSectionData();
+  const isTableSection = activeTab === 'activities' || activeTab === 'resourcing';
+  const isImageSection = activeTab === 'architecture';
+
+  // Handle Related Case Study tab separately
+  if (activeTab === 'related_case_study') {
+    return (
+      <div className="p-6 bg-white dark:bg-dark-card rounded-lg border border-gray-200 dark:border-gray-700 max-h-[600px] overflow-y-auto">
+        {caseStudyLoading ? (
+          <div className="text-center py-12">
+            <div className="inline-block animate-spin rounded-full h-8 w-8 border-4 border-primary border-t-transparent"></div>
+            <p className="mt-4 text-gray-600 dark:text-gray-400">Loading related case study...</p>
+          </div>
+        ) : caseStudyError ? (
+          <div className="text-center py-12 text-red-600 dark:text-red-400">
+            <p className="font-semibold mb-2">Error</p>
+            <p className="text-sm">{caseStudyError}</p>
+          </div>
+        ) : caseStudy?.matched ? (
+          <div className="space-y-6">
+            <div className="bg-green-50 dark:bg-green-900/20 border-2 border-green-500 rounded-lg p-4 mb-6">
+              <p className="text-sm text-green-700 dark:text-green-400">
+                ✓ Found matching case study with {(caseStudy.similarity_score * 100).toFixed(1)}% similarity
+              </p>
+            </div>
+
+            <div className="border-b border-gray-200 dark:border-gray-700 pb-4">
+              <h4 className="text-lg font-semibold text-gray-800 dark:text-gray-200 mb-3">
+                Client Name
+              </h4>
+              <div className="ml-4">
+                <span className="text-gray-600 dark:text-gray-400">{caseStudy.case_study.client_name || '-'}</span>
+              </div>
+            </div>
+
+            <div className="border-b border-gray-200 dark:border-gray-700 pb-4">
+              <h4 className="text-lg font-semibold text-gray-800 dark:text-gray-200 mb-3">
+                Overview
+              </h4>
+              <div className="ml-4">
+                <span className="text-gray-600 dark:text-gray-400">{caseStudy.case_study.overview || '-'}</span>
+              </div>
+            </div>
+
+            <div className="border-b border-gray-200 dark:border-gray-700 pb-4">
+              <h4 className="text-lg font-semibold text-gray-800 dark:text-gray-200 mb-3">
+                Solution
+              </h4>
+              <div className="ml-4">
+                <span className="text-gray-600 dark:text-gray-400">{caseStudy.case_study.solution || '-'}</span>
+              </div>
+            </div>
+
+            <div className="pb-4">
+              <h4 className="text-lg font-semibold text-gray-800 dark:text-gray-200 mb-3">
+                Impact
+              </h4>
+              <div className="ml-4">
+                <span className="text-gray-600 dark:text-gray-400">{caseStudy.case_study.impact || '-'}</span>
+              </div>
+            </div>
+
+            {caseStudy.case_study.file_name && (
+              <div className="text-xs text-gray-500 dark:text-gray-400 mt-6 pt-4 border-t border-gray-200 dark:border-gray-700">
+                Source: {caseStudy.case_study.file_name}
+                {caseStudy.case_study.slide_range && ` (Slides ${caseStudy.case_study.slide_range})`}
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="text-center py-12">
+            <div className="text-gray-500 dark:text-gray-400 mb-4">
+              <svg className="w-16 h-16 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+            </div>
+            <p className="text-lg font-medium text-gray-700 dark:text-gray-300">
+              No matching case study was found in the provided PPT files.
+            </p>
+            <p className="text-sm text-gray-500 dark:text-gray-400 mt-2">
+              Upload case studies to the Knowledge Base to enable matching.
+            </p>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="p-6 bg-white dark:bg-dark-card rounded-lg border border-gray-200 dark:border-gray-700 max-h-[600px] overflow-y-auto">
+      {sectionData ? renderSection(sectionData, isTableSection, isImageSection) : (
+        <div className="text-center text-gray-500 italic py-8">
+          <p className="mb-2">This section has no data in the current scope</p>
+          <p className="text-sm font-medium mb-2">Available fields in scope:</p>
+          <div className="text-xs bg-gray-100 dark:bg-gray-800 p-3 rounded inline-block text-left">
+            {Object.keys(parsedDraft).map((key, idx) => (
+              <div key={idx}>• {key}</div>
+            ))}
+          </div>
+          {activeTab === 'costing' && (
+            <p className="mt-4 text-sm text-amber-600 dark:text-amber-400">
+              💡 Tip: The AI model didn't generate a cost projection section for this scope. You may want to regenerate the scope or add costing details manually.
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default ScopePreviewTabs;

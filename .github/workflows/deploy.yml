@@ -5,7 +5,7 @@ on:
     branches:
       - main
       - develop
-  workflow_dispatch:  # Allow manual trigger
+  workflow_dispatch:
 
 env:
   ACR_NAME: scopingbotacr.azurecr.io
@@ -21,12 +21,13 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      # Use ACR admin credentials directly
       - name: Log in to Azure Container Registry
         uses: docker/login-action@v3
         with:
           registry: ${{ env.ACR_NAME }}
-          username: ${{ secrets.AZURE_CLIENT_ID }}
-          password: ${{ secrets.AZURE_CLIENT_SECRET }}
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -118,43 +119,34 @@ jobs:
             echo "Starting deployment process..."
             echo "========================================="
 
-            # Navigate to deployment directory
             cd ~/scopebot-deploy
 
-            # Check if Minikube is running
             if ! minikube status > /dev/null 2>&1; then
               echo "Starting Minikube..."
               minikube start --driver=docker
             fi
 
-            # Configure kubectl to use Minikube context
             kubectl config use-context minikube
 
-            # Login to Azure Container Registry from Minikube
-            echo "Logging into Azure Container Registry..."
+            echo "Logging into ACR from Minikube..."
             minikube ssh << 'ENDMINIKUBE'
-              docker login scopingbotacr.azurecr.io \
-                -u ${{ secrets.AZURE_CLIENT_ID }} \
-                -p ${{ secrets.AZURE_CLIENT_SECRET }}
+              docker login scopingbotacr.azurecr.io -u ${{ secrets.ACR_USERNAME }} -p ${{ secrets.ACR_PASSWORD }}
           ENDMINIKUBE
 
-            # Create Docker registry secret in Kubernetes
             echo "Creating/updating ACR credentials in Kubernetes..."
             kubectl create namespace scopebot --dry-run=client -o yaml | kubectl apply -f -
 
             kubectl create secret docker-registry acr-secret \
               --namespace=scopebot \
               --docker-server=scopingbotacr.azurecr.io \
-              --docker-username=${{ secrets.AZURE_CLIENT_ID }} \
-              --docker-password=${{ secrets.AZURE_CLIENT_SECRET }} \
+              --docker-username=${{ secrets.ACR_USERNAME }} \
+              --docker-password=${{ secrets.ACR_PASSWORD }} \
               --dry-run=client -o yaml | kubectl apply -f -
 
-            # Pull latest images to Minikube
             echo "Pulling latest images into Minikube..."
             minikube ssh "docker pull scopingbotacr.azurecr.io/scopebot-frontend:latest"
             minikube ssh "docker pull scopingbotacr.azurecr.io/scopebot-backend:latest"
 
-            # Install or upgrade Helm chart
             echo "Deploying with Helm..."
             helm upgrade --install scopebot ./helm/scopebot \
               --namespace scopebot \
@@ -164,14 +156,12 @@ jobs:
               --wait \
               --timeout 10m
 
-            # Wait for all pods to be ready
             echo "Waiting for all pods to be ready..."
             kubectl wait --for=condition=ready pod \
               --all \
               --namespace=scopebot \
               --timeout=600s || true
 
-            # Display deployment status
             echo "========================================="
             echo "Deployment Status:"
             echo "========================================="
@@ -189,19 +179,14 @@ jobs:
             echo "========================================="
             kubectl get services -n scopebot
 
-            # Get Minikube IP
             MINIKUBE_IP=$(minikube ip)
             echo ""
             echo "========================================="
             echo "Access the application:"
             echo "========================================="
             echo "Minikube IP: $MINIKUBE_IP"
-            echo "Frontend Service: Get NodePort with 'kubectl get svc scopebot-frontend -n scopebot'"
-            echo "Backend Service: Get NodePort with 'kubectl get svc scopebot-backend -n scopebot'"
-            echo ""
-            echo "To expose services, run:"
-            echo "  kubectl port-forward -n scopebot svc/scopebot-frontend 8080:80 --address 0.0.0.0"
-            echo "  kubectl port-forward -n scopebot svc/scopebot-backend 8000:8000 --address 0.0.0.0"
+            echo "Frontend: http://\$MINIKUBE_IP:30080"
+            echo "Backend: http://\$MINIKUBE_IP:30800"
             echo "========================================="
           ENDSSH
 

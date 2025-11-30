@@ -22,6 +22,6 @@ resources:
 
 # Storage
 persistence:
-  enabled: false  # Set to true and configure PVC for production
+  enabled: true  # Enable persistent volumes for data safety
   size: 10Gi
-  storageClass: ""
+  storageClass: ""  # Use default storage class

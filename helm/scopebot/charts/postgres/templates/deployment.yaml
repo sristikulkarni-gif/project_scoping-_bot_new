@@ -25,11 +25,20 @@ spec:
           protocol: TCP
         env:
         - name: POSTGRES_DB
-          value: {{ .Values.postgres.database | quote }}
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "postgres.fullname" . }}-secret
+              key: POSTGRES_DB
         - name: POSTGRES_USER
-          value: {{ .Values.postgres.user | quote }}
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "postgres.fullname" . }}-secret
+              key: POSTGRES_USER
         - name: POSTGRES_PASSWORD
-          value: {{ .Values.postgres.password | quote }}
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "postgres.fullname" . }}-secret
+              key: POSTGRES_PASSWORD
         - name: PGDATA
           value: "/var/lib/postgresql/data/pgdata"
         volumeMounts:
@@ -39,6 +48,9 @@ spec:
           {{- toYaml .Values.resources | nindent 10 }}
       volumes:
       - name: postgres-storage
-        emptyDir: {}  # For dev - use PersistentVolumeClaim for production
-        # persistentVolumeClaim:
-        #   claimName: {{ include "postgres.fullname" . }}-pvc
+        {{- if .Values.persistence.enabled }}
+        persistentVolumeClaim:
+          claimName: {{ include "postgres.fullname" . }}-pvc
+        {{- else }}
+        emptyDir: {}
+        {{- end }}

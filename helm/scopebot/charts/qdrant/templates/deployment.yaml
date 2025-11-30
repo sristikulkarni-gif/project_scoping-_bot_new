@@ -33,6 +33,9 @@ spec:
           {{- toYaml .Values.resources | nindent 10 }}
       volumes:
       - name: qdrant-storage
-        emptyDir: {}  # For dev - use PersistentVolumeClaim for production
-        # persistentVolumeClaim:
-        #   claimName: {{ include "qdrant.fullname" . }}-pvc
+        {{- if .Values.persistence.enabled }}
+        persistentVolumeClaim:
+          claimName: {{ include "qdrant.fullname" . }}-pvc
+        {{- else }}
+        emptyDir: {}
+        {{- end }}

@@ -1,0 +1,220 @@
+name: Build and Deploy to Azure VM
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+  workflow_dispatch:  # Allow manual trigger
+
+env:
+  ACR_NAME: scopingbotacr.azurecr.io
+  FRONTEND_IMAGE: scopingbotacr.azurecr.io/scopebot-frontend
+  BACKEND_IMAGE: scopingbotacr.azurecr.io/scopebot-backend
+
+jobs:
+  build-and-push:
+    name: Build and Push Docker Images
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Log in to Azure Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.ACR_NAME }}
+          username: ${{ secrets.AZURE_CLIENT_ID }}
+          password: ${{ secrets.AZURE_CLIENT_SECRET }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push Frontend image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./frontend
+          file: ./frontend/Dockerfile
+          push: true
+          tags: |
+            ${{ env.FRONTEND_IMAGE }}:latest
+            ${{ env.FRONTEND_IMAGE }}:${{ github.sha }}
+          cache-from: type=registry,ref=${{ env.FRONTEND_IMAGE }}:buildcache
+          cache-to: type=registry,ref=${{ env.FRONTEND_IMAGE }}:buildcache,mode=max
+
+      - name: Build and push Backend image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          file: ./backend/Dockerfile
+          push: true
+          tags: |
+            ${{ env.BACKEND_IMAGE }}:latest
+            ${{ env.BACKEND_IMAGE }}:${{ github.sha }}
+          cache-from: type=registry,ref=${{ env.BACKEND_IMAGE }}:buildcache
+          cache-to: type=registry,ref=${{ env.BACKEND_IMAGE }}:buildcache,mode=max
+
+  deploy-to-vm:
+    name: Deploy to Azure VM
+    runs-on: ubuntu-latest
+    needs: build-and-push
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.VM_SSH_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H ${{ secrets.VM_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Create Helm values override file
+        run: |
+          cat > helm-values-override.yaml << EOF
+          backend:
+            image:
+              repository: ${{ env.BACKEND_IMAGE }}
+              tag: latest
+              pullPolicy: Always
+            secrets:
+              POSTGRES_PASSWORD: "${{ secrets.POSTGRES_PASSWORD }}"
+              DATABASE_URL: "postgresql+asyncpg://scopebot:${{ secrets.POSTGRES_PASSWORD }}@scopebot-postgres:5432/scopebot_db"
+              SECRET_KEY: "${{ secrets.SECRET_KEY }}"
+              SMTP_HOST: "${{ secrets.SMTP_HOST }}"
+              SMTP_PORT: "${{ secrets.SMTP_PORT }}"
+              SMTP_USER: "${{ secrets.SMTP_USER }}"
+              SMTP_PASS: "${{ secrets.SMTP_PASS }}"
+              OLLAMA_HOST: "${{ secrets.OLLAMA_HOST }}"
+              AZURE_STORAGE_ACCOUNT: "${{ secrets.AZURE_STORAGE_ACCOUNT }}"
+              AZURE_STORAGE_KEY: "${{ secrets.AZURE_STORAGE_KEY }}"
+              AZURE_STORAGE_CONTAINER: "${{ secrets.AZURE_STORAGE_CONTAINER }}"
+
+          frontend:
+            image:
+              repository: ${{ env.FRONTEND_IMAGE }}
+              tag: latest
+              pullPolicy: Always
+
+          postgres:
+            postgres:
+              password: "${{ secrets.POSTGRES_PASSWORD }}"
+          EOF
+
+      - name: Copy files to VM
+        run: |
+          ssh -i ~/.ssh/id_rsa ${{ secrets.VM_USER }}@${{ secrets.VM_HOST }} "mkdir -p ~/scopebot-deploy"
+          scp -i ~/.ssh/id_rsa -r ./helm ${{ secrets.VM_USER }}@${{ secrets.VM_HOST }}:~/scopebot-deploy/
+          scp -i ~/.ssh/id_rsa helm-values-override.yaml ${{ secrets.VM_USER }}@${{ secrets.VM_HOST }}:~/scopebot-deploy/
+
+      - name: Deploy to Minikube on VM
+        run: |
+          ssh -i ~/.ssh/id_rsa ${{ secrets.VM_USER }}@${{ secrets.VM_HOST }} << 'ENDSSH'
+            set -e
+
+            echo "========================================="
+            echo "Starting deployment process..."
+            echo "========================================="
+
+            # Navigate to deployment directory
+            cd ~/scopebot-deploy
+
+            # Check if Minikube is running
+            if ! minikube status > /dev/null 2>&1; then
+              echo "Starting Minikube..."
+              minikube start --driver=docker
+            fi
+
+            # Configure kubectl to use Minikube context
+            kubectl config use-context minikube
+
+            # Login to Azure Container Registry from Minikube
+            echo "Logging into Azure Container Registry..."
+            minikube ssh << 'ENDMINIKUBE'
+              docker login scopingbotacr.azurecr.io \
+                -u ${{ secrets.AZURE_CLIENT_ID }} \
+                -p ${{ secrets.AZURE_CLIENT_SECRET }}
+          ENDMINIKUBE
+
+            # Create Docker registry secret in Kubernetes
+            echo "Creating/updating ACR credentials in Kubernetes..."
+            kubectl create namespace scopebot --dry-run=client -o yaml | kubectl apply -f -
+
+            kubectl create secret docker-registry acr-secret \
+              --namespace=scopebot \
+              --docker-server=scopingbotacr.azurecr.io \
+              --docker-username=${{ secrets.AZURE_CLIENT_ID }} \
+              --docker-password=${{ secrets.AZURE_CLIENT_SECRET }} \
+              --dry-run=client -o yaml | kubectl apply -f -
+
+            # Pull latest images to Minikube
+            echo "Pulling latest images into Minikube..."
+            minikube ssh "docker pull scopingbotacr.azurecr.io/scopebot-frontend:latest"
+            minikube ssh "docker pull scopingbotacr.azurecr.io/scopebot-backend:latest"
+
+            # Install or upgrade Helm chart
+            echo "Deploying with Helm..."
+            helm upgrade --install scopebot ./helm/scopebot \
+              --namespace scopebot \
+              --create-namespace \
+              --values ./helm/scopebot/values.yaml \
+              --values ./helm-values-override.yaml \
+              --wait \
+              --timeout 10m
+
+            # Wait for all pods to be ready
+            echo "Waiting for all pods to be ready..."
+            kubectl wait --for=condition=ready pod \
+              --all \
+              --namespace=scopebot \
+              --timeout=600s || true
+
+            # Display deployment status
+            echo "========================================="
+            echo "Deployment Status:"
+            echo "========================================="
+            kubectl get all -n scopebot
+
+            echo ""
+            echo "========================================="
+            echo "Pod Details:"
+            echo "========================================="
+            kubectl get pods -n scopebot -o wide
+
+            echo ""
+            echo "========================================="
+            echo "Services:"
+            echo "========================================="
+            kubectl get services -n scopebot
+
+            # Get Minikube IP
+            MINIKUBE_IP=$(minikube ip)
+            echo ""
+            echo "========================================="
+            echo "Access the application:"
+            echo "========================================="
+            echo "Minikube IP: $MINIKUBE_IP"
+            echo "Frontend Service: Get NodePort with 'kubectl get svc scopebot-frontend -n scopebot'"
+            echo "Backend Service: Get NodePort with 'kubectl get svc scopebot-backend -n scopebot'"
+            echo ""
+            echo "To expose services, run:"
+            echo "  kubectl port-forward -n scopebot svc/scopebot-frontend 8080:80 --address 0.0.0.0"
+            echo "  kubectl port-forward -n scopebot svc/scopebot-backend 8000:8000 --address 0.0.0.0"
+            echo "========================================="
+          ENDSSH
+
+      - name: Cleanup
+        if: always()
+        run: |
+          rm -f ~/.ssh/id_rsa
+          rm -f helm-values-override.yaml
+
+      - name: Deployment Summary
+        if: success()
+        run: |
+          echo "✅ Deployment completed successfully!"
+          echo "Images deployed:"
+          echo "  - Frontend: ${{ env.FRONTEND_IMAGE }}:latest"
+          echo "  - Backend: ${{ env.BACKEND_IMAGE }}:latest"

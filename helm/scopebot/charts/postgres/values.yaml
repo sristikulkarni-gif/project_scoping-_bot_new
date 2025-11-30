@@ -14,7 +14,7 @@ service:
 postgres:
   database: "scopebot"
   user: "scopebot"
-  password: ""  # REPLACE with secure password (must match backend DATABASE_URL)
+  password: ""  # Will be injected from parent chart or GitHub Secrets
 
 resources:
   limits:
@@ -26,6 +26,6 @@ resources:
 
 # Storage
 persistence:
-  enabled: false  # Set to true and configure PVC for production
+  enabled: true  # Enable persistent volumes for data safety
   size: 10Gi
-  storageClass: ""
+  storageClass: ""  # Use default storage class

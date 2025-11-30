@@ -101,7 +101,18 @@ jobs:
           postgres:
             postgres:
               password: "${{ secrets.POSTGRES_PASSWORD }}"
+            persistence:
+              enabled: true
+              size: 10Gi
+              storageClass: standard
+
+          qdrant:
+            persistence:
+              enabled: true
+              size: 10Gi
+              storageClass: standard
           EOF
+
 
       - name: Copy files to VM
         run: |

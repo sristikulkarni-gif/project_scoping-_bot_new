@@ -4,7 +4,7 @@ image:
   repository: scopebot-backend
   pullPolicy: IfNotPresent
   tag: "latest"
-  
+
 imagePullSecrets:
   - name: acr-secret
 
@@ -40,7 +40,7 @@ secrets:
   POSTGRES_DB: "scopebot"
   POSTGRES_USER: "scopebot"
   POSTGRES_PASSWORD: ""  # REPLACE with secure password
-  DATABASE_URL: "postgresql://scopebot:PASSWORD@postgres:5432/scopebot"  # REPLACE PASSWORD
+  DATABASE_URL: "postgresql+asyncpg://scopebot:password@scopebot-postgres:5432/scopebot_db"  # REPLACE PASSWORD
   SECRET_KEY: ""  # REPLACE with random secret (e.g., openssl rand -hex 32)
   ALGORITHM: "HS256"
   ACCESS_TOKEN_EXPIRE_MINUTES: "30"

@@ -110,11 +110,8 @@ jobs:
           scp -i ~/.ssh/id_rsa helm-values-override.yaml ${{ secrets.VM_USER }}@${{ secrets.VM_HOST }}:~/scopebot-deploy/
 
       - name: Deploy to Minikube on VM
-        env:
-          ACR_USERNAME: ${{ secrets.ACR_USERNAME }}
-          ACR_PASSWORD: ${{ secrets.ACR_PASSWORD }}
         run: |
-          ssh -i ~/.ssh/id_rsa ${{ secrets.VM_USER }}@${{ secrets.VM_HOST }} bash << 'ENDSSH'
+          ssh -i ~/.ssh/id_rsa ${{ secrets.VM_USER }}@${{ secrets.VM_HOST }} bash << ENDSSH
             set -e
             
             echo "========================================="
@@ -132,9 +129,9 @@ jobs:
             # Configure kubectl to use Minikube context
             kubectl config use-context minikube
             
-            # Login to ACR from Minikube (using pipe instead of -c flag)
+            # Login to ACR from Minikube
             echo "Logging into ACR from Minikube..."
-            echo "docker login scopingbotacr.azurecr.io -u $ACR_USERNAME -p '$ACR_PASSWORD'" | minikube ssh
+            echo "docker login scopingbotacr.azurecr.io -u '${{ secrets.ACR_USERNAME }}' -p '${{ secrets.ACR_PASSWORD }}'" | minikube ssh
             
             # Create namespace
             echo "Creating/updating namespace..."
@@ -145,8 +142,8 @@ jobs:
             kubectl create secret docker-registry acr-secret \
               --namespace=scopebot \
               --docker-server=scopingbotacr.azurecr.io \
-              --docker-username="$ACR_USERNAME" \
-              --docker-password="$ACR_PASSWORD" \
+              --docker-username='${{ secrets.ACR_USERNAME }}' \
+              --docker-password='${{ secrets.ACR_PASSWORD }}' \
               --dry-run=client -o yaml | kubectl apply -f -
             
             # Pull latest images to Minikube
@@ -192,14 +189,14 @@ jobs:
             kubectl get services -n scopebot
             
             # Get Minikube IP and show access info
-            MINIKUBE_IP=$(minikube ip)
+            MINIKUBE_IP=\$(minikube ip)
             echo ""
             echo "========================================="
             echo "Access the application:"
             echo "========================================="
-            echo "Minikube IP: $MINIKUBE_IP"
-            echo "Frontend: http://$MINIKUBE_IP:30080"
-            echo "Backend: http://$MINIKUBE_IP:30800"
+            echo "Minikube IP: \$MINIKUBE_IP"
+            echo "Frontend: http://\$MINIKUBE_IP:30080"
+            echo "Backend: http://\$MINIKUBE_IP:30800"
             echo ""
             echo "Or via VM public IP (if ports are forwarded):"
             echo "Frontend: http://${{ secrets.VM_HOST }}:30080"

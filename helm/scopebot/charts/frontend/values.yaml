@@ -5,6 +5,9 @@ image:
   pullPolicy: IfNotPresent
   tag: "latest"
 
+imagePullSecrets:
+  - name: acr-secret
+  
 service:
   type: ClusterIP
   port: 80

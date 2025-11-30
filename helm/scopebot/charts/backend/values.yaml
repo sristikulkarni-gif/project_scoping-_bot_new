@@ -4,6 +4,9 @@ image:
   repository: scopebot-backend
   pullPolicy: IfNotPresent
   tag: "latest"
+  
+imagePullSecrets:
+  - name: acr-secret
 
 service:
   type: ClusterIP

@@ -4,21 +4,22 @@ metadata:
   name: {{ include "backend.fullname" . }}
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "backend.labels" . | nindent 4 }}
+    {{ include "backend.labels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.replicaCount }}
   selector:
     matchLabels:
-      {{- include "backend.selectorLabels" . | nindent 6 }}
+      {{ include "backend.selectorLabels" . | nindent 6 }}
   template:
     metadata:
       labels:
-        {{- include "backend.selectorLabels" . | nindent 8 }}
+        {{ include "backend.selectorLabels" . | nindent 8 }}
     spec:
       {{- if .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml .Values.imagePullSecrets | nindent 8 }}
       {{- end }}
+
       containers:
       - name: backend
         image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
@@ -53,17 +54,17 @@ spec:
         - name: GEMINI_API_KEY
           valueFrom:
             secretKeyRef:
-              name: "{{ include \"backend.fullname\" . }}-secret"
+              name: {{ include "backend.fullname" . }}-secret
               key: GEMINI_API_KEY
         - name: GEMINI_MODEL
           valueFrom:
             secretKeyRef:
-              name: "{{ include \"backend.fullname\" . }}-secret"
+              name: {{ include "backend.fullname" . }}-secret
               key: GEMINI_MODEL
         - name: JINA_API_KEY
           valueFrom:
             secretKeyRef:
-              name: "{{ include \"backend.fullname\" . }}-secret"
+              name: {{ include "backend.fullname" . }}-secret
               key: JINA_API_KEY
         - name: JINA_MODEL
           valueFrom:
@@ -110,70 +111,70 @@ spec:
             secretKeyRef:
               name: {{ include "backend.fullname" . }}-secret
               key: REFRESH_TOKEN_EXPIRE_DAYS
-        {{- if .Values.secrets.SMTP_HOST -}}
+        {{- if .Values.secrets.SMTP_HOST }}
         - name: SMTP_HOST
           valueFrom:
             secretKeyRef:
-              name: "{{ include \"backend.fullname\" . }}-secret"
+              name: {{ include "backend.fullname" . }}-secret
               key: SMTP_HOST
         - name: SMTP_PORT
           valueFrom:
             secretKeyRef:
-              name: "{{ include \"backend.fullname\" . }}-secret"
+              name: {{ include "backend.fullname" . }}-secret
               key: SMTP_PORT
         - name: SMTP_USER
           valueFrom:
             secretKeyRef:
-              name: "{{ include \"backend.fullname\" . }}-secret"
+              name: {{ include "backend.fullname" . }}-secret
               key: SMTP_USER
         - name: SMTP_PASS
           valueFrom:
             secretKeyRef:
-              name: "{{ include \"backend.fullname\" . }}-secret"
+              name: {{ include "backend.fullname" . }}-secret
               key: SMTP_PASS
-        {{- end -}}
-        {{- if .Values.secrets.OLLAMA_HOST -}}
+        {{- end }}
+        {{- if .Values.secrets.OLLAMA_HOST }}
         - name: OLLAMA_HOST
           valueFrom:
             secretKeyRef:
-              name: "{{ include \"backend.fullname\" . }}-secret"
+              name: {{ include "backend.fullname" . }}-secret
               key: OLLAMA_HOST
-        {{- end -}}
-        {{- if .Values.secrets.OLLAMA_MODEL -}}
+        {{- end }}
+        {{- if .Values.secrets.OLLAMA_MODEL }}
         - name: OLLAMA_MODEL
           valueFrom:
             secretKeyRef:
-              name: "{{ include \"backend.fullname\" . }}-secret"
+              name: {{ include "backend.fullname" . }}-secret
               key: OLLAMA_MODEL
-        {{- end -}}
-        {{- if .Values.secrets.OLLAMA_EMBED_MODEL -}}
+        {{- end }}
+        {{- if .Values.secrets.OLLAMA_EMBED_MODEL }}
         - name: OLLAMA_EMBED_MODEL
           valueFrom:
             secretKeyRef:
-              name: "{{ include \"backend.fullname\" . }}-secret"
+              name: {{ include "backend.fullname" . }}-secret
               key: OLLAMA_EMBED_MODEL
-        {{- end -}}
-        {{- if .Values.secrets.AZURE_STORAGE_ACCOUNT -}}
+        {{- end }}
+        {{- if .Values.secrets.AZURE_STORAGE_ACCOUNT }}
         - name: AZURE_STORAGE_ACCOUNT
           valueFrom:
             secretKeyRef:
-              name: "{{ include \"backend.fullname\" . }}-secret"
+              name: {{ include "backend.fullname" . }}-secret
               key: AZURE_STORAGE_ACCOUNT
-        {{- end -}}
-        {{- if .Values.secrets.AZURE_STORAGE_KEY -}}
+        {{- end }}
+        {{- if .Values.secrets.AZURE_STORAGE_KEY }}
         - name: AZURE_STORAGE_KEY
           valueFrom:
             secretKeyRef:
-              name: "{{ include \"backend.fullname\" . }}-secret"
+              name: {{ include "backend.fullname" . }}-secret
               key: AZURE_STORAGE_KEY
-        {{- end -}}
-        {{- if .Values.secrets.AZURE_STORAGE_CONTAINER -}}
+        {{- end }}
+        {{- if .Values.secrets.AZURE_STORAGE_CONTAINER }}
         - name: AZURE_STORAGE_CONTAINER
           valueFrom:
             secretKeyRef:
-              name: "{{ include \"backend.fullname\" . }}-secret"
+              name: {{ include "backend.fullname" . }}-secret
               key: AZURE_STORAGE_CONTAINER
-        {{- end -}}
+        {{- end }}
         volumeMounts:
         - name: storage
           mountPath: {{ .Values.volumes.localStoragePath }}
@@ -182,11 +183,11 @@ spec:
         - name: chroma-data
           mountPath: {{ .Values.volumes.chromaPersistDir }}
         resources:
-          {{- toYaml .Values.resources | nindent 10 -}}
+          {{- toYaml .Values.resources | nindent 10 }}
       volumes:
       - name: storage
-        emptyDir: {}  # For dev - use PVC/PV for production
+        emptyDir: {}
       - name: knowledge-base
-        emptyDir: {}  # For dev - use PVC/PV for production
+        emptyDir: {}
       - name: chroma-data
-        emptyDir: {}  # For dev - use PVC/PV for production
+        emptyDir: {}

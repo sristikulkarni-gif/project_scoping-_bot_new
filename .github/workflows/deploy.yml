@@ -110,6 +110,9 @@ jobs:
           scp -i ~/.ssh/id_rsa helm-values-override.yaml ${{ secrets.VM_USER }}@${{ secrets.VM_HOST }}:~/scopebot-deploy/
 
       - name: Deploy to Minikube on VM
+        env:
+          ACR_USERNAME: ${{ secrets.ACR_USERNAME }}
+          ACR_PASSWORD: ${{ secrets.ACR_PASSWORD }}
         run: |
           ssh -i ~/.ssh/id_rsa ${{ secrets.VM_USER }}@${{ secrets.VM_HOST }} bash << 'ENDSSH'
             set -e
@@ -120,58 +123,89 @@ jobs:
             
             cd ~/scopebot-deploy
             
-            # Start Minikube if not running
+            # Check if Minikube is running
             if ! minikube status > /dev/null 2>&1; then
               echo "Starting Minikube..."
               minikube start --driver=docker
             fi
             
-            # Configure kubectl
+            # Configure kubectl to use Minikube context
             kubectl config use-context minikube
             
-            echo "Configuring Minikube Docker environment..."
-            eval \$(minikube docker-env)
+            # Login to ACR from Minikube (using pipe instead of -c flag)
+            echo "Logging into ACR from Minikube..."
+            echo "docker login scopingbotacr.azurecr.io -u $ACR_USERNAME -p '$ACR_PASSWORD'" | minikube ssh
             
-            echo "Logging into ACR (inside Minikube Docker daemon)..."
-            docker login scopingbotacr.azurecr.io -u "${{ secrets.ACR_USERNAME }}" -p "${{ secrets.ACR_PASSWORD }}"
-            
-            echo "Pulling the latest images..."
-            docker pull scopingbotacr.azurecr.io/scopebot-frontend:latest
-            docker pull scopingbotacr.azurecr.io/scopebot-backend:latest
-            
-            echo "Creating namespace..."
+            # Create namespace
+            echo "Creating/updating namespace..."
             kubectl create namespace scopebot --dry-run=client -o yaml | kubectl apply -f -
             
-            echo "Creating ACR secret inside Kubernetes..."
+            # Create Docker registry secret in Kubernetes
+            echo "Creating/updating ACR credentials in Kubernetes..."
             kubectl create secret docker-registry acr-secret \
               --namespace=scopebot \
               --docker-server=scopingbotacr.azurecr.io \
-              --docker-username="${{ secrets.ACR_USERNAME }}" \
-              --docker-password="${{ secrets.ACR_PASSWORD }}" \
+              --docker-username="$ACR_USERNAME" \
+              --docker-password="$ACR_PASSWORD" \
               --dry-run=client -o yaml | kubectl apply -f -
             
+            # Pull latest images to Minikube
+            echo "Pulling frontend image into Minikube..."
+            echo "docker pull scopingbotacr.azurecr.io/scopebot-frontend:latest" | minikube ssh
+            
+            echo "Pulling backend image into Minikube..."
+            echo "docker pull scopingbotacr.azurecr.io/scopebot-backend:latest" | minikube ssh
+            
+            # Install or upgrade Helm chart
             echo "Deploying with Helm..."
             helm upgrade --install scopebot ./helm/scopebot \
               --namespace scopebot \
+              --create-namespace \
               --values ./helm/scopebot/values.yaml \
               --values ./helm-values-override.yaml \
-              --wait --timeout 10m
+              --wait \
+              --timeout 10m
             
-            echo "Waiting for pods..."
+            # Wait for all pods to be ready
+            echo "Waiting for all pods to be ready..."
             kubectl wait --for=condition=ready pod \
-              -n scopebot --all --timeout=600s || true
+              --all \
+              --namespace=scopebot \
+              --timeout=600s || true
             
+            # Display deployment status
+            echo "========================================="
             echo "Deployment Status:"
+            echo "========================================="
             kubectl get all -n scopebot
             
-            MINIKUBE_IP=\$(minikube ip)
+            echo ""
             echo "========================================="
-            echo "Access URLs:"
-            echo "Frontend: http://\$MINIKUBE_IP:30080"
-            echo "Backend:  http://\$MINIKUBE_IP:30800"
+            echo "Pod Details:"
+            echo "========================================="
+            kubectl get pods -n scopebot -o wide
+            
+            echo ""
+            echo "========================================="
+            echo "Services:"
+            echo "========================================="
+            kubectl get services -n scopebot
+            
+            # Get Minikube IP and show access info
+            MINIKUBE_IP=$(minikube ip)
+            echo ""
+            echo "========================================="
+            echo "Access the application:"
+            echo "========================================="
+            echo "Minikube IP: $MINIKUBE_IP"
+            echo "Frontend: http://$MINIKUBE_IP:30080"
+            echo "Backend: http://$MINIKUBE_IP:30800"
+            echo ""
+            echo "Or via VM public IP (if ports are forwarded):"
+            echo "Frontend: http://${{ secrets.VM_HOST }}:30080"
+            echo "Backend: http://${{ secrets.VM_HOST }}:30800"
             echo "========================================="
           ENDSSH
-
 
       - name: Cleanup
         if: always()

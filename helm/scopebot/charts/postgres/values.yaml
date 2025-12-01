@@ -12,9 +12,9 @@ service:
 
 # PostgreSQL configuration
 postgres:
-  database: "scopebot"
+  database: "scopebot_db"
   user: "scopebot"
-  password: ""  # Will be injected from parent chart or GitHub Secrets
+  password: "password"  # Will be injected from parent chart or GitHub Secrets
 
 resources:
   limits:

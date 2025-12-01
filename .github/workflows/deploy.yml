@@ -113,7 +113,6 @@ jobs:
               storageClass: standard
           EOF
 
-
       - name: Copy files to VM
         run: |
           ssh -i ~/.ssh/id_rsa ${{ secrets.VM_USER }}@${{ secrets.VM_HOST }} "mkdir -p ~/scopebot-deploy"
@@ -122,7 +121,7 @@ jobs:
 
       - name: Deploy to Minikube on VM
         run: |
-          ssh -i ~/.ssh/id_rsa ${{ secrets.VM_USER }}@${{ secrets.VM_HOST }} bash << ENDSSH
+          ssh -i ~/.ssh/id_rsa ${{ secrets.VM_USER }}@${{ secrets.VM_HOST }} bash << 'ENDSSH'
             set -e
             
             echo "========================================="
@@ -131,36 +130,41 @@ jobs:
             
             cd ~/scopebot-deploy
             
-            # Check if Minikube is running
+            # Ensure Minikube is running
             if ! minikube status > /dev/null 2>&1; then
               echo "Starting Minikube..."
               minikube start --driver=docker
+              sleep 10
             fi
             
-            # Configure kubectl to use Minikube context
+            # Enable storage addons
+            echo "Enabling storage provisioner..."
+            minikube addons enable storage-provisioner 2>/dev/null || true
+            minikube addons enable default-storageclass 2>/dev/null || true
+            
+            # Configure kubectl
             kubectl config use-context minikube
             
             # Create namespace
-            echo "Creating/updating namespace..."
+            echo "Creating namespace..."
             kubectl create namespace scopebot --dry-run=client -o yaml | kubectl apply -f -
             
-            # Create Docker registry secret in Kubernetes
-            # This secret will be used by Kubernetes to pull images from ACR
-            echo "Creating/updating ACR credentials in Kubernetes..."
+            # Delete old ACR secret if exists
+            kubectl delete secret acr-secret -n scopebot 2>/dev/null || true
+            
+            # Create fresh ACR secret
+            echo "Creating ACR credentials..."
             kubectl create secret docker-registry acr-secret \
               --namespace=scopebot \
               --docker-server=scopingbotacr.azurecr.io \
               --docker-username='${{ secrets.ACR_USERNAME }}' \
-              --docker-password='${{ secrets.ACR_PASSWORD }}' \
-              --dry-run=client -o yaml | kubectl apply -f -
+              --docker-password='${{ secrets.ACR_PASSWORD }}'
             
-            echo "ACR secret created successfully!"
+            echo "✅ ACR secret created!"
             
-            # Install or upgrade Helm chart
-            # Kubernetes will automatically pull images from ACR using the imagePullSecrets
+            # Deploy with Helm
             echo "========================================="
             echo "Deploying with Helm..."
-            echo "Kubernetes will pull images from ACR automatically"
             echo "========================================="
             helm upgrade --install scopebot ./helm/scopebot \
               --namespace scopebot \
@@ -170,50 +174,65 @@ jobs:
               --wait \
               --timeout 15m
             
-            # Wait for all pods to be ready
-            echo "Waiting for all pods to be ready..."
+            # Wait for pods
+            echo "Waiting for pods to be ready..."
             kubectl wait --for=condition=ready pod \
               --all \
               --namespace=scopebot \
-              --timeout=900s || true
+              --timeout=600s || true
             
-            # Display deployment status
+            # Show status
+            echo ""
             echo "========================================="
             echo "Deployment Status:"
             echo "========================================="
             kubectl get all -n scopebot
             
             echo ""
-            echo "========================================="
-            echo "Pod Details:"
-            echo "========================================="
             kubectl get pods -n scopebot -o wide
             
             echo ""
+            kubectl get svc -n scopebot
+            
+            echo ""
+            kubectl get pvc -n scopebot
+            
+            # Setup port forwarding
+            echo ""
             echo "========================================="
-            echo "Services:"
+            echo "Setting up port forwarding..."
             echo "========================================="
-            kubectl get services -n scopebot
+            
+            MINIKUBE_IP=$(minikube ip)
+            echo "Minikube IP: $MINIKUBE_IP"
+            
+            # Kill old socat processes
+            sudo pkill -f "socat.*30080" 2>/dev/null || true
+            sudo pkill -f "socat.*30800" 2>/dev/null || true
+            sleep 2
+            
+            # Start port forwarding
+            sudo apt-get install -y socat >/dev/null 2>&1 || true
+            sudo nohup socat TCP-LISTEN:30080,fork,reuseaddr TCP:$MINIKUBE_IP:30080 > /tmp/socat-30080.log 2>&1 &
+            sudo nohup socat TCP-LISTEN:30800,fork,reuseaddr TCP:$MINIKUBE_IP:30800 > /tmp/socat-30800.log 2>&1 &
+            
+            sleep 3
+            
+            echo "Port forwarding active:"
+            sudo netstat -tlnp | grep -E '30080|30800' || echo "Checking..."
             
             echo ""
             echo "========================================="
-            echo "Recent Pod Events:"
+            echo "✅ Deployment Complete!"
             echo "========================================="
-            kubectl get events -n scopebot --sort-by='.lastTimestamp' | tail -20
-            
-            # Get Minikube IP and show access info
-            MINIKUBE_IP=\$(minikube ip)
             echo ""
-            echo "========================================="
-            echo "Access the application:"
-            echo "========================================="
-            echo "Minikube IP: \$MINIKUBE_IP"
-            echo "Frontend: http://\$MINIKUBE_IP:30080"
-            echo "Backend: http://\$MINIKUBE_IP:30800"
+            echo "Access your application:"
+            echo "  Frontend: http://${{ secrets.VM_HOST }}:30080"
+            echo "  Backend:  http://${{ secrets.VM_HOST }}:30800/docs"
             echo ""
-            echo "Or via VM public IP (if ports are forwarded):"
-            echo "Frontend: http://${{ secrets.VM_HOST }}:30080"
-            echo "Backend: http://${{ secrets.VM_HOST }}:30800"
+            echo "From inside VM:"
+            echo "  Frontend: http://$MINIKUBE_IP:30080"
+            echo "  Backend:  http://$MINIKUBE_IP:30800/docs"
             echo "========================================="
           ENDSSH
 
@@ -234,4 +253,4 @@ jobs:
           echo ""
           echo "🌐 Access your application:"
           echo "  - Frontend: http://${{ secrets.VM_HOST }}:30080"
-          echo "  - Backend: http://${{ secrets.VM_HOST }}:30800"
+          echo "  - Backend: http://${{ secrets.VM_HOST }}:30800/docs"

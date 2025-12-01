@@ -27,5 +27,5 @@ resources:
 # Storage
 persistence:
   enabled: true  # Enable persistent volumes for data safety
-  size: 10Gi
+  size: 1Gi
   storageClass: ""  # Use default storage class

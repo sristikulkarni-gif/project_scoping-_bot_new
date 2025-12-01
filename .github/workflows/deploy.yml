@@ -79,6 +79,8 @@ jobs:
               repository: ${{ env.BACKEND_IMAGE }}
               tag: latest
               pullPolicy: Always
+            env:
+              FRONTEND_URL: "http://${{ secrets.VM_HOST }}:30080"
             secrets:
               POSTGRES_PASSWORD: "${{ secrets.POSTGRES_PASSWORD }}"
               DATABASE_URL: "postgresql+asyncpg://scopebot:${{ secrets.POSTGRES_PASSWORD }}@scopebot-postgres:5432/scopebot_db"
@@ -112,6 +114,7 @@ jobs:
               size: 10Gi
               storageClass: standard
           EOF
+
 
       - name: Copy files to VM
         run: |

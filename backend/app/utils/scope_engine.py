@@ -1256,6 +1256,72 @@ def _extract_questions_from_text(raw_text: str) -> list[dict]:
             })
 
     return [{"category": c, "items": lst} for c, lst in grouped.items()]
+
+def _extract_document_overview(full_text: str, max_chars: int = 10000) -> str:
+    """
+    Extract the beginning of document as overview to avoid sending entire large document.
+    This typically includes executive summary, objectives, and high-level scope.
+
+    Args:
+        full_text: Complete document text
+        max_chars: Maximum characters to extract (default 10000 = ~2500 words)
+
+    Returns:
+        Document overview text
+    """
+    if not full_text:
+        return ""
+
+    # If document is small enough, return as-is
+    if len(full_text) <= max_chars:
+        return full_text
+
+    # Extract first portion
+    overview = full_text[:max_chars]
+
+    # Try to cut at a sentence boundary to avoid mid-sentence truncation
+    last_period = overview.rfind('. ')
+    if last_period > max_chars * 0.8:  # If we can find a period in last 20%
+        overview = overview[:last_period + 1]
+
+    return overview
+
+def _retrieve_relevant_sections_by_aspects(project_name: str, aspects: List[str], k: int = 2) -> List[str]:
+    """
+    Use RAG to retrieve relevant document sections for specific aspects.
+    This ensures we get focused content instead of entire document.
+
+    Args:
+        project_name: Name of the project for contextual queries
+        aspects: List of aspects to query (e.g., "technical requirements")
+        k: Number of chunks to retrieve per aspect
+
+    Returns:
+        List of relevant text sections
+    """
+    relevant_sections = []
+
+    for aspect in aspects:
+        try:
+            # Create focused query
+            query = f"{project_name} {aspect}"
+
+            # Use existing RAG retrieval
+            results = _rag_retrieve(query, k=k)
+
+            if results:
+                # Extract text chunks
+                for group in results:
+                    for chunk in group.get("chunks", []):
+                        content = chunk.get("content", "")
+                        if content and content not in relevant_sections:  # Avoid duplicates
+                            relevant_sections.append(content)
+        except Exception as e:
+            logger.warning(f"Failed to retrieve sections for aspect '{aspect}': {e}")
+            continue
+
+    return relevant_sections
+
 async def generate_project_questions(db: AsyncSession, project) -> dict:
     """
     Generate a categorized questionnaire for the given project using Ollama.
@@ -1272,12 +1338,51 @@ async def generate_project_questions(db: AsyncSession, project) -> dict:
     except Exception as e:
         logger.warning(f"Failed to extract RFP for questions: {e}")
 
-    # ---------- Retrieve Knowledge Base ----------
-    kb_results = _rag_retrieve(rfp_text or project.name or project.domain)
-    kb_chunks = [ch["content"] for group in kb_results for ch in group["chunks"]] if kb_results else []
+    # ---------- Smart Document Processing (Chunked RAG Approach) ----------
+    # Instead of sending entire large document, use overview + RAG-retrieved sections
+    focused_rfp_content = ""
 
-    # ---------- Build prompt ----------
-    prompt = _build_questionnaire_prompt(rfp_text, kb_chunks, project)
+    if rfp_text:
+        # Extract document overview (first ~2500 words) instead of entire document
+        rfp_overview = _extract_document_overview(rfp_text, max_chars=10000)
+        logger.info(f"📄 Extracted RFP overview: {len(rfp_overview)} chars (from {len(rfp_text)} total chars)")
+
+        # Define key aspects to query for relevant sections
+        key_aspects = [
+            "technical requirements and specifications",
+            "project scope and deliverables",
+            "timeline and milestones",
+            "budget and resource constraints",
+            "integration and compatibility requirements",
+            "security and compliance requirements"
+        ]
+
+        # Use RAG to retrieve relevant sections for each aspect
+        project_name = getattr(project, "name", None) or getattr(project, "domain", None) or "project"
+        relevant_sections = _retrieve_relevant_sections_by_aspects(project_name, key_aspects, k=2)
+
+        if relevant_sections:
+            logger.info(f"🔍 Retrieved {len(relevant_sections)} relevant sections via RAG")
+
+        # Combine overview + relevant sections (focused content, not full document)
+        focused_rfp_content = rfp_overview
+        if relevant_sections:
+            # Limit to 10 sections to avoid overwhelming the prompt
+            focused_rfp_content += "\n\n=== Additional Relevant Details ===\n\n"
+            focused_rfp_content += "\n\n".join(relevant_sections[:10])
+
+        logger.info(f"✅ Using focused content: {len(focused_rfp_content)} chars (reduced from {len(rfp_text)} chars)")
+    else:
+        # No RFP files, use project metadata
+        focused_rfp_content = rfp_text
+
+    # ---------- Retrieve Knowledge Base ----------
+    kb_query = focused_rfp_content or project.name or project.domain
+    kb_results = _rag_retrieve(kb_query)
+    kb_chunks = [ch["content"] for group in kb_results for ch in group["chunks"]][:5] if kb_results else []
+
+    # ---------- Build prompt with focused content ----------
+    prompt = _build_questionnaire_prompt(focused_rfp_content, kb_chunks, project)
 
     # ---------- Query Ollama ----------
     try:

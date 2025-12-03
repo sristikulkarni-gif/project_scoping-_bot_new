@@ -46,23 +46,61 @@ def _safe_filename(name: str) -> str:
 async def _fetch_related_case_study(project_id: uuid.UUID, db: AsyncSession) -> Optional[Dict[str, Any]]:
     """
     Fetch the related case study for a project.
+    If no matching case study is found, generate a synthetic one using LLM.
 
-    Returns case study data or None if no match found.
+    Returns case study data with format:
+    {
+        "matched": bool,
+        "pending_approval": bool,
+        "similarity_score": float,
+        "case_study": {
+            "client_name": str,
+            "overview": str,
+            "solution": str,
+            "impact": str,
+            "file_name": str
+        }
+    }
     """
     try:
         from app.utils.ai_clients import embed_text_ollama, get_qdrant_client
         from app.config.config import CASE_STUDY_COLLECTION
+        from app.utils.generate_case_study import generate_synthetic_case_study
+        from app.utils.case_study_pdf import generate_case_study_pdf
+        from sqlalchemy import select
+
+        # Get project from database
+        result = await db.execute(
+            select(models.Project).where(models.Project.id == project_id)
+        )
+        project = result.scalar_one_or_none()
+
+        if not project:
+            return None
 
         # Load finalized_scope.json to get executive summary
         blob_name = f"projects/{project_id}/finalized_scope.json"
+        executive_summary = ""
+        rfp_text = None
+
         try:
             scope_bytes = await azure_blob.download_bytes(blob_name)
             scope_data = json.loads(scope_bytes.decode("utf-8"))
+            executive_summary = scope_data.get("project_summary", {}).get("executive_summary", "")
         except:
-            return None
+            pass
 
-        # Get executive summary
-        executive_summary = scope_data.get("project_summary", {}).get("executive_summary", "")
+        # Try to get RFP text from project files
+        try:
+            if getattr(project, "files", None):
+                project_files = [{"file_name": f.file_name, "file_path": f.file_path} for f in project.files]
+                if project_files:
+                    from app.utils.scope_engine import _extract_text_from_files
+                    rfp_text = await _extract_text_from_files(project_files)
+        except:
+            pass
+
+        # If no executive summary, skip case study
         if not executive_summary or len(executive_summary.strip()) < 20:
             return None
 
@@ -83,38 +121,112 @@ async def _fetch_related_case_study(project_id: uuid.UUID, db: AsyncSession) -> 
             limit=1
         )
 
-        if not all_results or len(all_results) == 0:
-            return None
-
-        best_score = float(all_results[0].score)
-
-        # Apply threshold
+        # Check if we found a match above threshold
         SIMILARITY_THRESHOLD = 0.70
-        if best_score < SIMILARITY_THRESHOLD:
-            return None
+        found_match = False
 
-        # Get the best match
-        best_match = all_results[0]
-        payload = best_match.payload or {}
+        if all_results and len(all_results) > 0:
+            best_score = float(all_results[0].score)
+            if best_score >= SIMILARITY_THRESHOLD:
+                found_match = True
 
-        # Parse case study metadata
-        case_study_json = payload.get("case_study_metadata")
-        if case_study_json:
-            case_study_data = json.loads(case_study_json) if isinstance(case_study_json, str) else case_study_json
-        else:
-            case_study_data = {}
+                # Get the best match
+                best_match = all_results[0]
+                payload = best_match.payload or {}
 
-        return {
-            "matched": True,
-            "client_name": case_study_data.get("client_name", "Unknown Client"),
-            "overview": case_study_data.get("overview", ""),
-            "solution": case_study_data.get("solution", ""),
-            "impact": case_study_data.get("impact", ""),
-            "similarity_score": best_score,
-            "source": f"{payload.get('file_name', '')} (Slides {case_study_data.get('slide_range', '')})"
-        }
+                # Parse case study metadata
+                case_study_json = payload.get("case_study_metadata")
+                if case_study_json:
+                    case_study_data = json.loads(case_study_json) if isinstance(case_study_json, str) else case_study_json
+                else:
+                    case_study_data = {}
+
+                return {
+                    "matched": True,
+                    "pending_approval": False,
+                    "similarity_score": best_score,
+                    "case_study": {
+                        "client_name": case_study_data.get("client_name", "Unknown Client"),
+                        "overview": case_study_data.get("overview", ""),
+                        "solution": case_study_data.get("solution", ""),
+                        "impact": case_study_data.get("impact", ""),
+                        "file_name": payload.get('file_name', 'case_study.pdf')
+                    }
+                }
+
+        # ============================================================
+        # NO MATCH FOUND - GENERATE SYNTHETIC CASE STUDY
+        # ============================================================
+        if not found_match:
+            logger.info(f"🤖 No matching case study found for project {project_id}. Generating synthetic case study...")
+
+            # Generate synthetic case study using LLM
+            case_study_data = await generate_synthetic_case_study(
+                db=db,
+                project=project,
+                executive_summary=executive_summary,
+                rfp_text=rfp_text
+            )
+
+            # Prepare file name
+            project_name = getattr(project, "name", "Project")
+            safe_client_name = re.sub(r'[^a-zA-Z0-9]+', '_', case_study_data["client_name"])
+            safe_project_name = re.sub(r'[^a-zA-Z0-9]+', '_', project_name)
+            file_name = f"{safe_client_name}_{safe_project_name}_case_study.pdf"
+
+            # Generate PDF
+            pdf_data = case_study_data.copy()
+            pdf_data["project_title"] = project_name
+            pdf_data["pending_approval"] = True
+
+            pdf_bytes = generate_case_study_pdf(pdf_data)
+
+            # Store PDF in pending folder
+            pending_blob_path = f"pending/{file_name}"
+            await azure_blob.upload_bytes(pdf_bytes, pending_blob_path, "knowledge_base")
+
+            logger.info(f"📁 Saved pending case study PDF: {pending_blob_path}")
+
+            # Create database record
+            pending_case_study = models.PendingGeneratedCaseStudy(
+                id=uuid.uuid4(),
+                project_id=project_id,
+                file_name=file_name,
+                blob_path=pending_blob_path,
+                client_name=case_study_data["client_name"],
+                project_title=project_name,
+                overview=case_study_data["overview"],
+                solution=case_study_data["solution"],
+                impact=case_study_data["impact"],
+                generated_by_llm=True,
+                generation_source=f"executive_summary:{len(executive_summary)} chars" +
+                                 (f", rfp_text:{len(rfp_text)} chars" if rfp_text else ""),
+                status="pending"
+            )
+
+            db.add(pending_case_study)
+            await db.commit()
+
+            logger.info(f"✅ Created pending case study record: {pending_case_study.id}")
+
+            # Return synthetic case study in same format
+            return {
+                "matched": False,
+                "pending_approval": True,
+                "similarity_score": 0.0,
+                "case_study": {
+                    "client_name": case_study_data["client_name"],
+                    "overview": case_study_data["overview"],
+                    "solution": case_study_data["solution"],
+                    "impact": case_study_data["impact"],
+                    "file_name": file_name
+                }
+            }
+
     except Exception as e:
-        logger.warning(f"Failed to fetch case study for project {project_id}: {e}")
+        logger.warning(f"Failed to fetch/generate case study for project {project_id}: {e}")
+        import traceback
+        traceback.print_exc()
         return None
 
 

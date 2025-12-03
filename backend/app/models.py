@@ -393,3 +393,65 @@ class PendingKBUpdate(Base):
 
     def __repr__(self):
         return f"<PendingKBUpdate({self.update_type}, status={self.status})>"
+
+
+class PendingGeneratedCaseStudy(Base):
+    """Track AI-generated case studies pending admin approval."""
+    __tablename__ = "pending_generated_case_studies"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True
+    )
+
+    # Associated project
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        index=True
+    )
+
+    # File information
+    file_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    blob_path: Mapped[str] = mapped_column(Text, nullable=False)  # knowledge_base/pending/...
+
+    # Case study content (JSON)
+    client_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    project_title: Mapped[str] = mapped_column(String(200), nullable=False)
+    overview: Mapped[str] = mapped_column(Text, nullable=False)
+    solution: Mapped[str] = mapped_column(Text, nullable=False)
+    impact: Mapped[str] = mapped_column(Text, nullable=False)
+
+    # Generation metadata
+    generated_by_llm: Mapped[bool] = mapped_column(default=True)
+    generation_source: Mapped[str | None] = mapped_column(Text, nullable=True)  # What was used to generate
+
+    # Approval status
+    status: Mapped[str] = mapped_column(
+        String(50), default="pending", index=True
+    )  # pending, approved, rejected
+
+    # Admin action
+    reviewed_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True
+    )
+    reviewed_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    admin_comment: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # KB document ID after approval
+    approved_document_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("knowledge_base_documents.id", ondelete="SET NULL"),
+        nullable=True
+    )
+
+    # Timestamps
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
+
+    def __repr__(self):
+        return f"<PendingGeneratedCaseStudy({self.client_name}, status={self.status})>"

@@ -198,34 +198,23 @@ const ScopePreviewTabs = ({ activeTab, parsedDraft }) => {
       return <div className="text-gray-500 italic">No data available</div>;
     }
 
-    // Special rendering for overview tab - show as table for better space utilization
+    // Special rendering for overview tab - show as modern card grid
     if (activeTab === 'overview' && typeof data === 'object' && !Array.isArray(data)) {
       return (
-        <div className="overflow-x-auto">
-          <table className="min-w-full border border-gray-300 dark:border-gray-600">
-            <thead className="bg-gray-100 dark:bg-gray-700">
-              <tr>
-                <th className="px-4 py-2 text-left text-sm font-semibold text-gray-700 dark:text-gray-200 border-b border-gray-300 dark:border-gray-600 w-1/3">
-                  Field
-                </th>
-                <th className="px-4 py-2 text-left text-sm font-semibold text-gray-700 dark:text-gray-200 border-b border-gray-300 dark:border-gray-600 w-2/3">
-                  Value
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {Object.entries(data).map(([key, value], idx) => (
-                <tr key={idx} className="hover:bg-gray-50 dark:hover:bg-gray-800">
-                  <td className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 border-b border-gray-200 dark:border-gray-700">
-                    {key.replace(/_/g, ' ')}
-                  </td>
-                  <td className="px-4 py-2 text-sm text-gray-600 dark:text-gray-400 border-b border-gray-200 dark:border-gray-700">
-                    {typeof value === 'object' ? JSON.stringify(value) : String(value || '-')}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 auto-rows-auto">
+          {Object.entries(data).map(([key, value], idx) => (
+            <div
+              key={idx}
+              className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4 hover:shadow-md transition-shadow duration-200 flex flex-col"
+            >
+              <div className="text-sm font-bold text-gray-700 dark:text-gray-300 mb-2 uppercase tracking-wide">
+                {key.replace(/_/g, ' ')}
+              </div>
+              <div className="text-base text-gray-900 dark:text-gray-100 break-words flex-grow">
+                {typeof value === 'object' ? JSON.stringify(value) : String(value || '-')}
+              </div>
+            </div>
+          ))}
         </div>
       );
     }

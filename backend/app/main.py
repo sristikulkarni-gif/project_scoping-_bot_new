@@ -6,7 +6,7 @@ import asyncio
 import logging
 from app.config.database import async_engine, Base, get_async_session
 from app.auth import router as auth_router
-from app.routers import projects, exports, blob, ratecards, project_prompts, etl
+from app.routers import projects, exports, blob, ratecards, project_prompts, etl, case_studies
 from app.utils import azure_blob
 from app.services.etl_pipeline import get_etl_pipeline
 
@@ -109,6 +109,22 @@ app.include_router(blob.router)
 app.include_router(ratecards.router)
 app.include_router(project_prompts.router)
 app.include_router(etl.router)
+app.include_router(case_studies.router)
+
+# ---------- Startup Event ----------
+@app.on_event("startup")
+async def startup_event():
+    """
+    Initialize application on startup.
+    Creates database tables if they don't exist.
+    """
+    try:
+        logger.info("🔄 Initializing database tables...")
+        async with async_engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        logger.info("✅ Database tables ready")
+    except Exception as e:
+        logger.error(f"❌ Database initialization failed: {e}")
 
 # ---------- Health Check ----------
 @app.get("/health")
@@ -117,4 +133,3 @@ async def health_check():
     Health check endpoint for Kubernetes probes.
     """
     return {"status": "ok"}
-

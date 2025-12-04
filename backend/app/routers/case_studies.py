@@ -11,8 +11,12 @@ from pydantic import BaseModel
 
 from app import models
 from app.config.database import get_async_session
-from app.config.auth import current_active_user, current_superuser
+from app.auth.router import fastapi_users
 from app.utils.case_study_management import approve_case_study, reject_case_study
+
+# Auth dependencies
+get_current_active_user = fastapi_users.current_user(active=True)
+get_current_superuser = fastapi_users.current_user(active=True, superuser=True)
 
 router = APIRouter(prefix="/api/case_studies", tags=["case_studies"])
 logger = logging.getLogger(__name__)
@@ -43,7 +47,7 @@ class CaseStudyResponse(BaseModel):
 @router.get("/pending", response_model=List[CaseStudyResponse])
 async def list_pending_case_studies(
     db: AsyncSession = Depends(get_async_session),
-    current_user: models.User = Depends(current_superuser)  # Only admins/superusers
+    current_user: models.User = Depends(get_current_superuser)  # Only admins/superusers
 ):
     """
     List all pending generated case studies awaiting approval.
@@ -87,7 +91,7 @@ async def approve_pending_case_study(
     pending_id: uuid.UUID,
     request: ApprovalRequest,
     db: AsyncSession = Depends(get_async_session),
-    current_user: models.User = Depends(current_superuser)  # Only admins/superusers
+    current_user: models.User = Depends(get_current_superuser)  # Only admins/superusers
 ):
     """
     Approve a pending generated case study.
@@ -121,7 +125,7 @@ async def reject_pending_case_study(
     pending_id: uuid.UUID,
     request: ApprovalRequest,
     db: AsyncSession = Depends(get_async_session),
-    current_user: models.User = Depends(current_superuser)  # Only admins/superusers
+    current_user: models.User = Depends(get_current_superuser)  # Only admins/superusers
 ):
     """
     Reject a pending generated case study.
@@ -152,7 +156,7 @@ async def reject_pending_case_study(
 async def get_pending_case_study(
     pending_id: uuid.UUID,
     db: AsyncSession = Depends(get_async_session),
-    current_user: models.User = Depends(current_superuser)  # Only admins/superusers
+    current_user: models.User = Depends(get_current_superuser)  # Only admins/superusers
 ):
     """
     Get details of a specific pending case study.

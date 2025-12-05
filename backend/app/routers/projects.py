@@ -57,6 +57,21 @@ async def create_project(
             detail="At least one project field or file must be provided."
         )
 
+    # Auto-generate project name from first uploaded file if not provided
+    if not name and files and len(files) > 0:
+        first_file = files[0]
+        if first_file.filename:
+            # Remove file extension and clean up the filename
+            import os
+            base_name = os.path.splitext(first_file.filename)[0]
+            # Replace underscores and special chars with spaces, clean up
+            name = base_name.replace('_', ' ').replace('-', ' ')
+            # Remove multiple spaces
+            name = ' '.join(name.split())
+            # Limit length to 100 characters
+            name = name[:100] if len(name) > 100 else name
+            logger.info(f"📝 Auto-generated project name from file: '{name}'")
+
     if company_id:
         from app.utils import ratecards
         sigmoid = await ratecards.get_or_create_sigmoid_company(db)
@@ -164,6 +179,20 @@ async def generate_project_scope_route(
     db_project = await projects.get_project(db, project_id=project_id, owner_id=current_user.id)
     if not db_project:
         raise HTTPException(status_code=404, detail="Project not found")
+
+    # Validate company is set
+    if not getattr(db_project, "company_id", None):
+        raise HTTPException(
+            status_code=400,
+            detail="Company must be set before generating scope. Please select a company for this project."
+        )
+
+    # Validate project has a name
+    if not getattr(db_project, "name", None) or not db_project.name.strip():
+        raise HTTPException(
+            status_code=400,
+            detail="Project name is required before generating scope. Please provide a project name."
+        )
 
     # Generate full scope (includes architecture)
     scope = await scope_engine.generate_project_scope(db, db_project) or {}
@@ -290,6 +319,20 @@ async def generate_project_questions_route(
     db_project = await projects.get_project(db, project_id=project_id, owner_id=current_user.id)
     if not db_project:
         raise HTTPException(status_code=404, detail="Project not found")
+
+    # Validate company is set
+    if not getattr(db_project, "company_id", None):
+        raise HTTPException(
+            status_code=400,
+            detail="Company must be set before generating questions. Please select a company for this project."
+        )
+
+    # Validate project has a name
+    if not getattr(db_project, "name", None) or not db_project.name.strip():
+        raise HTTPException(
+            status_code=400,
+            detail="Project name is required before generating questions. Please provide a project name."
+        )
 
     try:
         # Generate categorized questions
@@ -477,10 +520,111 @@ async def get_related_case_study(
 
         if not search_results or len(search_results) == 0:
             logger.info(f"❌ No case study matches threshold of {SIMILARITY_THRESHOLD:.0%}. Best match was {best_score:.2%}")
+
+            # ============================================================
+            # NO MATCH FOUND - CHECK FOR EXISTING PENDING OR GENERATE NEW
+            # ============================================================
+            from app.utils.generate_case_study import generate_synthetic_case_study
+            from app.utils.case_study_pdf import generate_case_study_pdf
+            import re
+
+            # First, check if a pending case study already exists for this project
+            existing_result = await db.execute(
+                select(models.PendingGeneratedCaseStudy)
+                .where(models.PendingGeneratedCaseStudy.project_id == project_id)
+                .where(models.PendingGeneratedCaseStudy.status == "pending")
+                .order_by(models.PendingGeneratedCaseStudy.created_at.desc())
+            )
+            existing_pending = existing_result.scalars().first()  # Get most recent pending case study
+
+            if existing_pending:
+                # Return existing pending case study instead of generating new one
+                logger.info(f"✅ Found existing pending case study for project {project_id}: {existing_pending.id}")
+                return {
+                    "matched": False,
+                    "pending_approval": True,
+                    "similarity_score": 0.0,
+                    "case_study": {
+                        "client_name": existing_pending.client_name,
+                        "overview": existing_pending.overview,
+                        "solution": existing_pending.solution,
+                        "impact": existing_pending.impact,
+                        "file_name": existing_pending.file_name
+                    }
+                }
+
+            # Only generate new synthetic case study if no pending one exists
+            logger.info(f"🤖 No existing pending case study found. Generating new synthetic case study for project {project_id}...")
+
+            # Get RFP text if available
+            rfp_text = None
+            try:
+                rfp_blob = f"projects/{project_id}/rfp_document.txt"
+                if await azure_blob.blob_exists(rfp_blob):
+                    rfp_bytes = await azure_blob.download_bytes(rfp_blob)
+                    rfp_text = rfp_bytes.decode("utf-8", errors="ignore")
+            except:
+                pass
+
+            # Generate synthetic case study using LLM
+            case_study_data = await generate_synthetic_case_study(
+                db=db,
+                project=db_project,
+                executive_summary=executive_summary,
+                rfp_text=rfp_text
+            )
+
+            # Prepare PDF data with pending approval flag
+            pdf_data = {
+                **case_study_data,
+                "pending_approval": True,
+                "project_name": db_project.name
+            }
+
+            # Generate PDF
+            pdf_bytes = generate_case_study_pdf(pdf_data)
+
+            # Create file name
+            project_name_safe = re.sub(r'[^a-zA-Z0-9]+', '_', db_project.name or "Project")
+            safe_client_name = re.sub(r'[^a-zA-Z0-9]+', '_', case_study_data["client_name"])
+            file_name = f"{safe_client_name}_{project_name_safe}_case_study.pdf"
+
+            # Upload PDF to pending folder
+            pending_blob_path = f"pending/{file_name}"
+            await azure_blob.upload_bytes(pdf_bytes, pending_blob_path, "knowledge_base")
+            logger.info(f"📁 Saved pending case study PDF: {pending_blob_path}")
+
+            # Create database record
+            pending_case_study = models.PendingGeneratedCaseStudy(
+                project_id=project_id,
+                file_name=file_name,
+                blob_path=pending_blob_path,
+                client_name=case_study_data["client_name"],
+                project_title=db_project.name or "Untitled Project",
+                overview=case_study_data["overview"],
+                solution=case_study_data["solution"],
+                impact=case_study_data["impact"],
+                generated_by_llm=True,
+                generation_source=f"executive_summary: {executive_summary[:200]}...",
+                status="pending"
+            )
+            db.add(pending_case_study)
+            await db.commit()
+            await db.refresh(pending_case_study)
+
+            logger.info(f"✅ Created pending case study record: {pending_case_study.id}")
+
             return {
                 "matched": False,
-                "message": f"No matching case study found with sufficient similarity (minimum {SIMILARITY_THRESHOLD:.0%} required, best match was {best_score:.1%}).",
-                "similarity_score": best_score
+                "pending_approval": True,
+                "similarity_score": 0.0,
+                "case_study": {
+                    "client_name": case_study_data["client_name"],
+                    "overview": case_study_data["overview"],
+                    "solution": case_study_data["solution"],
+                    "impact": case_study_data["impact"],
+                    "file_name": file_name
+                }
             }
 
         # Get the best match

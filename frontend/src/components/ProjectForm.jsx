@@ -26,7 +26,7 @@ const DOMAIN_COMPLIANCE_MAP = {
 
 export default function ProjectForm({ onSubmit }) {
   const navigate = useNavigate();
-  const { createProject, createProjectWithScope, generateQuestions, updateQuestions } = useProjects();
+  const { createProject, createProjectWithScope, generateQuestions, updateQuestions, generateRefinedScope } = useProjects();
   const { companies, selectedCompany, setSelectedCompany, loadCompanies } = useRateCards();
 
   useEffect(() => {
@@ -216,7 +216,7 @@ export default function ProjectForm({ onSubmit }) {
   const handleRemoveFile = (index) =>
     setForm((prev) => ({ ...prev, files: prev.files.filter((_, i) => i !== index) }));
 
-  // Generate Scope (Quick Flow)
+  // Generate Scope (Quick Flow or After Questions)
   const handleGenerateScope = async (e) => {
     e.preventDefault();
 
@@ -234,14 +234,30 @@ export default function ProjectForm({ onSubmit }) {
 
     setScopeLoading(true);
     try {
-      // If "Others" is selected, don't send company_id (allows LLM to generate roles)
-      const companyId = selectedCompany === "others" ? null : (selectedCompany || undefined);
-      const payload = { ...form, company_id: companyId };
-      const { projectId, scope, redirectUrl } = await createProjectWithScope(payload);
+      let finalProjectId;
+      let scope;
+      let redirectUrl;
 
-      if (onSubmit) onSubmit({ project_id: projectId, scope, redirect_url: redirectUrl });
+      // Check if project already exists (from Generate Questions flow)
+      if (projectId) {
+        // Use existing project, just generate scope (no duplicate creation)
+        const result = await generateRefinedScope(projectId);
+        finalProjectId = projectId;
+        scope = result.scope;
+        redirectUrl = `/exports/${projectId}`;
+      } else {
+        // Quick flow: Create new project with scope
+        const companyId = selectedCompany === "others" ? null : (selectedCompany || undefined);
+        const payload = { ...form, company_id: companyId };
+        const result = await createProjectWithScope(payload);
+        finalProjectId = result.projectId;
+        scope = result.scope;
+        redirectUrl = result.redirectUrl;
+      }
 
-      navigate(`/exports/${projectId}`, { state: { draftScope: scope } });
+      if (onSubmit) onSubmit({ project_id: finalProjectId, scope, redirect_url: redirectUrl });
+
+      navigate(`/exports/${finalProjectId}`, { state: { draftScope: scope } });
 
       toast.success("Scope generated successfully!");
       setForm({
@@ -255,6 +271,10 @@ export default function ProjectForm({ onSubmit }) {
         files: [],
       });
       setValidationErrors({});
+      setProjectId(null); // Reset project ID
+      setShowQuestions(false);
+      setQuestions([]);
+      setAnswersSaved(false);
     } catch (err) {
       console.error(" Failed to generate scope:", err);
       toast.error("Failed to generate project scope.");
@@ -267,13 +287,38 @@ export default function ProjectForm({ onSubmit }) {
 
   //  Generate Questions from RFP
   const handleGenerateQuestions = async () => {
+    // Validate required fields: Project Name and Company
+    const errors = {};
+
+    if (!form.name || !form.name.trim()) {
+      errors.name = "Project name is required";
+    }
+
+    if (!selectedCompany) {
+      errors.company = "Please select a company";
+    }
+
     if (!form.files.length) {
-      toast.error("Please upload at least one RFP file first!");
+      errors.files = "Please upload at least one RFP file";
+    }
+
+    // Show all validation errors
+    if (Object.keys(errors).length > 0) {
+      setValidationErrors(errors);
+
+      // Show toast for each error
+      if (errors.name) toast.error(errors.name);
+      if (errors.company) toast.error(errors.company);
+      if (errors.files) toast.error(errors.files);
+
       return;
     }
 
     try {
       setQuestionLoading(true);
+      // Clear any previous validation errors
+      setValidationErrors({});
+
       // If "Others" is selected, don't send company_id (allows LLM to generate roles)
       const companyId = selectedCompany === "others" ? null : (selectedCompany || undefined);
       const payload = { ...form, company_id: companyId };
@@ -464,14 +509,18 @@ export default function ProjectForm({ onSubmit }) {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {/* Project Name */}
         <div>
+          <label className="block font-medium mb-1 text-gray-700 dark:text-gray-200">Project Name *</label>
           <input
             name="name"
-            placeholder="Project Name "
+            placeholder="Enter project name"
             value={form.name}
-            onChange={handleChange}
-            onBlur={(e) =>
-              setValidationErrors((prev) => ({ ...prev, name: validateField("name", e.target.value) }))
-            }
+            onChange={(e) => {
+              handleChange(e);
+              // Clear validation error when user types
+              if (validationErrors.name) {
+                setValidationErrors((prev) => ({ ...prev, name: "" }));
+              }
+            }}
             className={`border rounded-lg px-3 py-2 w-full ${
               validationErrors.name ? "border-red-500 focus:ring-red-500" : "focus:ring-primary"
             }`}
@@ -703,11 +752,17 @@ export default function ProjectForm({ onSubmit }) {
       </div>
       {/* Company Selector */}
       <div>
-        <label className="block font-medium mb-1 text-gray-700 dark:text-gray-200">Company</label>
+        <label className="block font-medium mb-1 text-gray-700 dark:text-gray-200">Company *</label>
         <select
           value={selectedCompany || ""}
-          onChange={(e) => setSelectedCompany(e.target.value)}
-          className="border rounded-lg px-3 py-2 w-full bg-white dark:bg-dark-card focus:ring-primary"
+          onChange={(e) => {
+            setSelectedCompany(e.target.value);
+            // Clear validation error when user selects a company
+            setValidationErrors((prev) => ({ ...prev, company: "" }));
+          }}
+          className={`border rounded-lg px-3 py-2 w-full bg-white dark:bg-dark-card ${
+            validationErrors.company ? "border-red-500 focus:ring-red-500" : "focus:ring-primary"
+          }`}
         >
           <option value="" disabled>Select a company</option>
           {companies.map((c) => (
@@ -717,6 +772,9 @@ export default function ProjectForm({ onSubmit }) {
           ))}
           <option value="others">Others (LLM-Generated Roles)</option>
         </select>
+        {validationErrors.company && (
+          <p className="text-red-500 text-sm mt-1">{validationErrors.company}</p>
+        )}
       </div>
 
       

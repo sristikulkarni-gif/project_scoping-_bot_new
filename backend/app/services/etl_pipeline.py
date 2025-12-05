@@ -96,6 +96,13 @@ class ETLPipeline:
             logger.info(f"📄 Found {len(all_files)} files in knowledge_base storage")
 
             for file_info in all_files:
+                # Skip files in the pending/ folder (awaiting admin approval)
+                blob_path = file_info.get("path", "")
+                if blob_path.startswith("pending/") or "/pending/" in blob_path:
+                    logger.debug(f"⏭️ Skipping pending file: {blob_path}")
+                    stats["pending_approval"] += 1
+                    continue
+
                 try:
                     await self._process_single_document(db, file_info, stats)
                 except Exception as e:

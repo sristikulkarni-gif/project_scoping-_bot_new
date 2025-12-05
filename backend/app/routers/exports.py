@@ -155,9 +155,35 @@ async def _fetch_related_case_study(project_id: uuid.UUID, db: AsyncSession) -> 
                 }
 
         # ============================================================
-        # NO MATCH FOUND - GENERATE SYNTHETIC CASE STUDY
+        # NO MATCH FOUND - CHECK FOR EXISTING PENDING OR GENERATE NEW
         # ============================================================
         if not found_match:
+            # First, check if a pending case study already exists for this project
+            existing_result = await db.execute(
+                select(models.PendingGeneratedCaseStudy)
+                .where(models.PendingGeneratedCaseStudy.project_id == project_id)
+                .where(models.PendingGeneratedCaseStudy.status == "pending")
+                .order_by(models.PendingGeneratedCaseStudy.created_at.desc())
+            )
+            existing_pending = existing_result.scalars().first()  # Get most recent pending case study
+
+            if existing_pending:
+                # Return existing pending case study instead of generating new one
+                logger.info(f"✅ Found existing pending case study for project {project_id}: {existing_pending.id}")
+                return {
+                    "matched": False,
+                    "pending_approval": True,
+                    "similarity_score": 0.0,
+                    "case_study": {
+                        "client_name": existing_pending.client_name,
+                        "overview": existing_pending.overview,
+                        "solution": existing_pending.solution,
+                        "impact": existing_pending.impact,
+                        "file_name": existing_pending.file_name
+                    }
+                }
+
+            # Only generate new synthetic case study if no pending one exists
             logger.info(f"🤖 No matching case study found for project {project_id}. Generating synthetic case study...")
 
             # Generate synthetic case study using LLM

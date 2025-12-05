@@ -53,41 +53,52 @@ async def generate_synthetic_case_study(
         if rfp_text and len(rfp_text) > 100:
             rfp_section = f"\n**RFP DOCUMENT EXCERPT:**\n{rfp_text[:2000]}\n"
 
-        # Build generation prompt
-        prompt = f"""You are an expert case study writer. Generate a professional case study based on the following project information.
+        # Build generation prompt - DO NOT use actual project/client names
+        prompt = f"""You are an expert case study writer. Generate a professional case study for a RELATED project that is SIMILAR to (but NOT the same as) the project described below.
 
-**PROJECT INFORMATION:**
-- Client Name: {client_name}
-- Project Title: {project_name}
-- Domain: {domain}
+**IMPORTANT INSTRUCTIONS:**
+- DO NOT use the project name "{project_name}" as the client name
+- DO NOT create a case study about this exact project
+- INSTEAD: Create a case study about a DIFFERENT, SIMILAR client in the same industry/domain
+- The case study should be RELATED and demonstrate similar challenges/solutions
+- Use a DIFFERENT client name (but same industry if possible)
+
+**PROJECT CONTEXT (for reference only - DO NOT copy exactly):**
+- Project Domain: {domain}
 - Use Cases: {use_cases or "Not specified"}
 - Complexity: {complexity or "Medium"}
 - Tech Stack: {tech_stack or "Modern technology stack"}
-- Compliance Requirements: {compliance or "Standard compliance"}
+- Compliance: {compliance or "Standard compliance"}
 
 **EXECUTIVE SUMMARY:**
 {executive_summary}
 {rfp_section}
 **TASK:**
-Generate a professional case study with the following sections. Make it realistic, specific, and impactful.
+Generate a RELATED case study from a DIFFERENT client with SIMILAR challenges.
 
-**OUTPUT FORMAT** (JSON only, no explanations):
+**EXAMPLES OF GOOD CLIENT NAMES (based on domain):**
+- Data Analytics/AI: "TechCorp Global", "DataDrive Solutions", "Analytics Innovators Inc"
+- Finance/Banking: "FinServe International", "Capital Solutions Group"
+- Healthcare: "MedTech Systems", "HealthCare Innovations"
+- Retail/E-commerce: "RetailPro Enterprises", "E-Commerce Solutions Ltd"
+- Manufacturing: "Industrial Automation Corp", "Manufacturing Systems Inc"
+
+**OUTPUT FORMAT** (JSON only):
 {{
-  "client_name": "{client_name}",
-  "overview": "2-3 sentence overview describing the client's business challenge and objectives. Focus on the problem they needed to solve and why.",
-  "solution": "3-4 sentences describing the solution approach, key technologies used, and implementation strategy. Be specific about methodologies and technical decisions.",
-  "impact": "2-3 sentences describing measurable business outcomes, improvements, or benefits achieved. Include specific metrics or percentages if possible (e.g., '30% reduction in processing time')."
+  "client_name": "A DIFFERENT client name (NOT '{project_name}' or parts of it)",
+  "overview": "2-3 sentences describing this DIFFERENT client's similar business challenge. Make it related but NOT identical to the project context above.",
+  "solution": "3-4 sentences describing how Sigmoid delivered a similar solution for this client. Use similar technologies and approaches but make it a completed past project.",
+  "impact": "2-3 sentences with measurable outcomes (10-50% improvements). Example: '35% faster data processing', 'Reduced costs by 20%', 'Improved accuracy to 95%'."
 }}
 
-**GUIDELINES:**
-1. Keep it professional and realistic
-2. Use third-person perspective
-3. Make metrics believable (10-50% improvements are realistic)
-4. Focus on business value, not just technical details
-5. Ensure overview flows into solution, and solution flows into impact
-6. Output ONLY valid JSON, nothing else
+**CRITICAL RULES:**
+1. Client name MUST be different from "{project_name}"
+2. Client name should NOT contain words from the project title
+3. Make it a SIMILAR but SEPARATE case study
+4. Use realistic metrics and business language
+5. Output ONLY valid JSON
 
-Generate the case study now:"""
+Generate the RELATED case study now:"""
 
         # Call LLM
         logger.info(f"🤖 Generating synthetic case study for project {project.id}")

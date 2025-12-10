@@ -7,6 +7,11 @@ metadata:
     {{- include "frontend.labels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.replicaCount }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 0        # Don't create extra pods (prevents memory spike in Minikube)
+      maxUnavailable: 1  # Allow old pod to terminate before new pod starts
   selector:
     matchLabels:
       {{- include "frontend.selectorLabels" . | nindent 6 }}

@@ -2048,11 +2048,12 @@ async def generate_architecture(
     digraph_count = 0
     cleaned_lines = []
     for line in lines:
-        if re.match(r'^\s*digraph\s+\w+\s*\{\s*$', line, re.IGNORECASE):
+        # More lenient regex - matches "digraph <name> {" with any trailing content
+        if re.match(r'^\s*digraph\s+\w+\s*\{', line, re.IGNORECASE):
             digraph_count += 1
             if digraph_count == 1:
                 cleaned_lines.append(line)
-            # else: skip duplicate digraph lines
+            # else: skip duplicate digraph lines (don't add to cleaned_lines)
         else:
             cleaned_lines.append(line)
     dot_code = '\n'.join(cleaned_lines)
@@ -2099,6 +2100,52 @@ async def generate_architecture(
     # Ensure node names don't have special characters that need escaping
     # Replace problematic node names with safe versions
     dot_code = re.sub(r'([A-Za-z0-9_]+)\s*\[label="([^"]+):"', r'\1 [label="\2"', dot_code)
+
+    # Fix missing semicolons between attributes in node definitions
+    # Pattern: attribute="value" followed by another attribute= (missing semicolon)
+    # This handles cases like: label="text" fillcolor="#color" shape=box
+    dot_code = re.sub(
+        r'([a-zA-Z_]+\s*=\s*"[^"]*")\s+([a-zA-Z_]+\s*=)',
+        r'\1; \2',
+        dot_code
+    )
+
+    # Fix unclosed quotes and malformed attribute values
+    # Remove newlines that appear inside quoted attribute values (common AI error)
+    # Pattern: attribute="value<newline> → close the quote before the newline
+    dot_code = re.sub(
+        r'([a-zA-Z_]+\s*=\s*"[^"\n]*)\n',
+        r'\1";\n',
+        dot_code
+    )
+
+    # Fix incomplete or malformed hex colors in attributes
+    # Pattern: color attributes with incomplete hex values (less than 6 chars)
+    # Replace with a safe default color
+    dot_code = re.sub(
+        r'((?:fill)?color|bgcolor)\s*=\s*"#?([A-Fa-f0-9]{1,5})(?:"|;|\s|$)',
+        r'\1="#CCCCCC";',
+        dot_code
+    )
+
+    # Fix cluster declarations - ensure they use proper subgraph syntax
+    # Pattern: cluster<Name> { should be subgraph cluster<Name> {
+    dot_code = re.sub(
+        r'^\s*(cluster[A-Za-z0-9_]+)\s*\{',
+        r'subgraph \1 {',
+        dot_code,
+        flags=re.MULTILINE
+    )
+
+    # Fix hex colors missing # prefix
+    # Pattern: color-related attributes with 6-character hex values without #
+    # Matches: fillcolor="F3E5F5", color="ECEFF1", bgcolor="E8F5E9"
+    # Converts to: fillcolor="#F3E5F5", color="#ECEFF1", bgcolor="#E8F5E9"
+    dot_code = re.sub(
+        r'((?:fill)?color|bgcolor)\s*=\s*"([A-Fa-f0-9]{6})"',
+        r'\1="#\2"',
+        dot_code
+    )
 
     # ---------- Step 3: Do NOT override GPT's style ----------
     # Keep GPT's own clusters, nodes, and colors — just ensure it's syntactically valid

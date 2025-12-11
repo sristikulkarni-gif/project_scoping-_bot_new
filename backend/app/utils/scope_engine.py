@@ -2044,6 +2044,8 @@ async def generate_architecture(
 
     # Remove duplicate digraph declarations (common LLM error)
     # If we have multiple "digraph Architecture {" lines, keep only the first one
+        # Remove duplicate digraph declarations (common LLM error)
+    # If we have multiple "digraph Architecture {" lines, keep only the first one
     lines = dot_code.split('\n')
     digraph_count = 0
     cleaned_lines = []
@@ -2057,6 +2059,16 @@ async def generate_architecture(
         else:
             cleaned_lines.append(line)
     dot_code = '\n'.join(cleaned_lines)
+    
+    # Additional check: Remove any digraph lines that appear after opening brace
+    # Sometimes AI generates: digraph { \n digraph { which the above misses
+    dot_code = re.sub(
+        r'(digraph\s+\w+\s*\{[^\}]*?)\s*digraph\s+\w+\s*\{',
+        r'\1',
+        dot_code,
+        flags=re.IGNORECASE | re.DOTALL
+    )
+
 
     dot_code = re.sub(r"(?i)^graph\s", "digraph ", dot_code)
 
@@ -2101,14 +2113,23 @@ async def generate_architecture(
     # Replace problematic node names with safe versions
     dot_code = re.sub(r'([A-Za-z0-9_]+)\s*\[label="([^"]+):"', r'\1 [label="\2"', dot_code)
 
-    # Fix missing semicolons between attributes in node definitions
-    # Pattern: attribute="value" followed by another attribute= (missing semicolon)
-    # This handles cases like: label="text" fillcolor="#color" shape=box
+        # Fix missing semicolons between attributes in node definitions
+    # Pattern 1: attribute="value" followed by another attribute= (missing semicolon)
+    # This handles cases like: label="text" fillcolor="#color"
     dot_code = re.sub(
         r'([a-zA-Z_]+\s*=\s*"[^"]*")\s+([a-zA-Z_]+\s*=)',
         r'\1; \2',
         dot_code
     )
+    
+    # Pattern 2: attribute=unquoted_value followed by another attribute= (missing semicolon)
+    # This handles cases like: shape=box3d fillcolor="#color"
+    dot_code = re.sub(
+        r'([a-zA-Z_]+\s*=\s*[a-zA-Z0-9_]+)\s+([a-zA-Z_]+\s*=)',
+        r'\1; \2',
+        dot_code
+    )
+
 
     # Fix unclosed quotes and malformed attribute values
     # Remove newlines that appear inside quoted attribute values (common AI error)
@@ -2146,24 +2167,108 @@ async def generate_architecture(
         r'\1="#\2"',
         dot_code
     )
+ # Fix node names with spaces or special characters
+    # Replace spaces and hyphens in node names with underscores
+    def fix_node_name(match):
+        """Convert invalid node names to valid identifiers."""
+        node_name = match.group(1)
+        # Replace spaces, hyphens, dots with underscores
+        safe_name = re.sub(r'[\s\-\.]', '_', node_name)
+        # Remove any other special characters except alphanumeric and underscore
+        safe_name = re.sub(r'[^a-zA-Z0-9_]', '', safe_name)
+        # Ensure it doesn't start with a number
+        if safe_name and safe_name[0].isdigit():
+            safe_name = 'N_' + safe_name
+        return safe_name if safe_name else 'Node'
+
+    # Fix node identifiers before attributes: "My Node-1" [label=...] → My_Node_1 [label=...]
+    dot_code = re.sub(
+        r'^\s*([A-Za-z0-9][\w\s\-\.]*?)\s*\[',
+        lambda m: '    ' + fix_node_name(m) + ' [',
+        dot_code,
+        flags=re.MULTILINE
+    )
+
+    # Fix attributes without quotes (e.g., shape=box should work, but label values need quotes)
+    # Ensure label values are always quoted
+    dot_code = re.sub(
+        r'label\s*=\s*([^"\s;][^;,\]]*?)(\s*[;,\]])',
+        r'label="\1"\2',
+        dot_code
+    )
+
+    # Fix missing semicolons at end of lines with closing brackets
+    # Pattern: ] without semicolon before newline
+    dot_code = re.sub(
+        r'\]\s*\n',
+        r'];\n',
+        dot_code
+    )
+
+    # Fix double semicolons (from over-sanitization)
+    dot_code = re.sub(r';;+', ';', dot_code)
+
+    # Remove semicolons inside subgraph/digraph blocks (only at attribute/node level)
+    # Pattern: }; at end of subgraph should just be }
+    dot_code = re.sub(r'\}\s*;', r'}', dot_code)
+
+    # ---------- Step 3: Do NOT override GPT's style ----------
+    # Keep GPT's own clusters, nodes, and colors — just ensure it's syntactically valid
+    # (Old static preamble removed intentionally)
+
+    # ---------- Step 3.5: Final validation ----------
+    # Ensure we have at least one valid digraph structure
+    if not re.search(r'digraph\s+\w+\s*\{.*\}', dot_code, re.DOTALL):
+        logger.error(f" No valid digraph structure found in DOT code")
+        return await _generate_fallback_architecture(db, project, blob_base_path)
+
+    # Check for basic balance of braces
+    open_braces = dot_code.count('{')
+    close_braces = dot_code.count('}')
+    if abs(open_braces - close_braces) > 1:  # Allow 1 off for slight imbalance that we can fix
+        logger.warning(f" Brace imbalance detected: {open_braces} open, {close_braces} close")
+        if open_braces > close_braces:
+            dot_code += '}' * (open_braces - close_braces)
+        elif close_braces > open_braces:
+            dot_code = 'digraph Architecture {\n' + ('  ' * (close_braces - open_braces - 1)) + dot_code
+
 
     # ---------- Step 3: Do NOT override GPT's style ----------
     # Keep GPT's own clusters, nodes, and colors — just ensure it's syntactically valid
     # (Old static preamble removed intentionally)
 
     # ---------- Step 4: Render DOT → PNG & SVG ----------
+        # ---------- Step 4: Render DOT → PNG & SVG ----------
     try:
         tmp_base = tempfile.NamedTemporaryFile(delete=False, suffix=".dot").name
+
+        # Write DOT code to temp file for debugging if rendering fails
+        with open(tmp_base, 'w') as f:
+            f.write(dot_code)
+
         graph = graphviz.Source(dot_code, engine="dot")
 
         # Render both PNG and SVG for better clarity
-        graph.render(tmp_base, format="png", cleanup=True)
-        graph.render(tmp_base, format="svg", cleanup=True)
+        graph.render(tmp_base, format="png", cleanup=False)  # Keep .dot file for debugging
+        graph.render(tmp_base, format="svg", cleanup=False)
 
         png_path = tmp_base + ".png"
         svg_path = tmp_base + ".svg"
+
+        # Cleanup the .dot file after successful render
+        try:
+            os.remove(tmp_base)
+        except:
+            pass
+
     except Exception as e:
-        logger.error(f" Graphviz rendering failed: {e}\n--- DOT Snippet ---\n{dot_code[:800]}")
+        logger.error(f" Graphviz rendering failed: {e}")
+        logger.error(f"--- Full DOT Code ---\n{dot_code}\n--- End DOT Code ---")
+        # Try to keep the temp file for debugging
+        try:
+            logger.error(f" Failed DOT file saved at: {tmp_base}")
+        except:
+            pass
         return await _generate_fallback_architecture(db, project, blob_base_path)
 
     # ---------- Step 5: Upload PNG to Azure Blob ----------

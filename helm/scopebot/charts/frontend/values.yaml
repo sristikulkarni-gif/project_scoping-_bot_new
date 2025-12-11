@@ -1,7 +1,7 @@
 replicaCount: 1
 
 image:
-  repository: scopebot-frontend
+  repository: scopingbotacr.azurecr.io/scopebot-frontend
   pullPolicy: IfNotPresent
   tag: "latest"
 

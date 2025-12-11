@@ -2031,6 +2031,8 @@ async def generate_architecture(
 
     # Extract only the DOT code if LLM added commentary
     # Look for "digraph" and extract from there to the last closing brace
+        # Extract only the DOT code if LLM added commentary
+    # Look for "digraph" and extract from there to the last closing brace
     match = re.search(r'(digraph\s+\w+\s*\{.*\})\s*$', dot_code, re.DOTALL | re.IGNORECASE)
     if match:
         dot_code = match.group(1).strip()
@@ -2042,9 +2044,28 @@ async def generate_architecture(
             start_idx = match.start()
             dot_code = dot_code[start_idx:].strip()
 
-    # Remove duplicate digraph declarations (common LLM error)
-    # If we have multiple "digraph Architecture {" lines, keep only the first one
-        # Remove duplicate digraph declarations (common LLM error)
+    # AGGRESSIVE duplicate removal - AI sometimes generates ENTIRE graph twice
+    # Find the first complete digraph { ... } block and remove everything after
+    brace_count = 0
+    first_graph_end = -1
+    in_graph = False
+    
+    for i, char in enumerate(dot_code):
+        if char == '{':
+            brace_count += 1
+            in_graph = True
+        elif char == '}':
+            brace_count -= 1
+            if in_graph and brace_count == 0:
+                # Found the end of first complete graph
+                first_graph_end = i + 1
+                break
+    
+    if first_graph_end > 0:
+        # Keep only the first complete graph, remove any duplicates after
+        dot_code = dot_code[:first_graph_end].strip()
+    
+    # Remove duplicate digraph declarations at the beginning
     # If we have multiple "digraph Architecture {" lines, keep only the first one
     lines = dot_code.split('\n')
     digraph_count = 0
@@ -2059,6 +2080,7 @@ async def generate_architecture(
         else:
             cleaned_lines.append(line)
     dot_code = '\n'.join(cleaned_lines)
+
     
     # Additional check: Remove any digraph lines that appear after opening brace
     # Sometimes AI generates: digraph { \n digraph { which the above misses
@@ -2115,28 +2137,23 @@ async def generate_architecture(
 
         # Fix missing semicolons between attributes in node definitions
     # Pattern 1: attribute="value" followed by another attribute= (missing semicolon)
-    # This handles cases like: label="text" fillcolor="#color"
     dot_code = re.sub(
         r'([a-zA-Z_]+\s*=\s*"[^"]*")\s+([a-zA-Z_]+\s*=)',
         r'\1; \2',
         dot_code
     )
     
-    # Pattern 2: attribute=unquoted_value followed by another attribute= (missing semicolon)
-    # This handles cases like: shape=box3d fillcolor="#color"
+    # Pattern 2: attribute=unquoted_value followed by another attribute=
     dot_code = re.sub(
         r'([a-zA-Z_]+\s*=\s*[a-zA-Z0-9_]+)\s+([a-zA-Z_]+\s*=)',
         r'\1; \2',
         dot_code
     )
-
-
-    # Fix unclosed quotes and malformed attribute values
-    # Remove newlines that appear inside quoted attribute values (common AI error)
-    # Pattern: attribute="value<newline> → close the quote before the newline
+    
+    # Fix malformed attributes with spaces around = (e.g., "fill = value" -> "fillcolor=value")
     dot_code = re.sub(
-        r'([a-zA-Z_]+\s*=\s*"[^"\n]*)\n',
-        r'\1";\n',
+        r'fill\s*=\s*',
+        r'fillcolor=',
         dot_code
     )
 

@@ -503,22 +503,25 @@ async def get_related_case_study(
             logger.info(f"🔍 Best case study match found with similarity: {best_score:.2%}")
         else:
             logger.warning("⚠️ No case studies found in the collection at all")
-            return {
-                "matched": False,
-                "message": "No case studies found in the database. Please upload case study PPT files first.",
-                "similarity_score": 0.0
-            }
+            best_score = 0.0  # Set to 0 so we can check for pending case studies below
+            # Don't return early - continue to check pending case studies
 
         # Now apply threshold
         SIMILARITY_THRESHOLD = 0.65
-        search_results = qdrant_client.search(
-            collection_name=CASE_STUDY_COLLECTION,  # Dedicated case study collection
-            query_vector=query_vector,
-            limit=1,
-            score_threshold=SIMILARITY_THRESHOLD
-        )
+        
+        # Only search if we have results
+        if best_score > 0:
+            search_results = qdrant_client.search(
+                collection_name=CASE_STUDY_COLLECTION,  # Dedicated case study collection
+                query_vector=query_vector,
+                limit=1,
+                score_threshold=SIMILARITY_THRESHOLD
+            )
+        else:
+            search_results = []  # Empty Qdrant, skip search
 
         if not search_results or len(search_results) == 0:
+
             logger.info(f"❌ No case study matches threshold of {SIMILARITY_THRESHOLD:.0%}. Best match was {best_score:.2%}")
 
             # ============================================================

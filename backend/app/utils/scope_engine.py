@@ -20,6 +20,7 @@ from app.utils.ai_clients import (
     get_embed_client,
     get_qdrant_client,
     embed_text_ollama,
+    get_azure_client,
 )
 
 
@@ -44,44 +45,36 @@ def round_to_half(value: float) -> float:
     rounded = round(value * 2) / 2
     return max(0.5, rounded)  # Ensure minimum of 0.5
 
-def ollama_chat(prompt: str, model: str = llm_cfg["model"], temperature: float = 0.7, format_json: bool = False) -> str:
-    """Call Ollama to generate text from a prompt.
+from app.config.config import AZURE_OPENAI_DEPLOYMENT
 
-    Args:
-        prompt: The prompt to send to Ollama
-        model: The model to use (default from config)
-        temperature: Sampling temperature (default 0.7)
-        format_json: If True, forces Ollama to return valid JSON (default False)
+def ollama_chat(prompt: str, model: str = None, temperature: float = 0.7, format_json: bool = False) -> str:
+    """
+    Generate text using Azure OpenAI (replaces Ollama).
+    Arguments 'model' and 'format_json' are adapted for Azure.
     """
     try:
-        payload = {
-            "model": model,
-            "prompt": prompt,
-            "temperature": temperature,
-            "stream": False,
-            "options": {
-                "num_predict": -1,     # -1 means unlimited (let model decide)
-                "num_ctx": 32768,      # Increase context window to 32K
-                "temperature": temperature,
-                "stop": []              # Remove any stop sequences that might truncate
-            }
-        }
-
-        # Force JSON format output if requested
+        client = get_azure_client()
+        
+        # Azure OpenAI Chat Completion
+        messages = [{"role": "user", "content": prompt}]
         if format_json:
-            payload["format"] = "json"
-            logger.info("🔧 Ollama JSON format enforcement ENABLED (max tokens: UNLIMITED)")
-
-        resp = requests.post(
-            f"{llm_cfg['host']}/api/generate",
-            json=payload,
-            timeout=300  # Increase timeout to 5 minutes for longer responses
+            # Add system instruction for JSON if needed, or rely on prompt
+            messages.insert(0, {"role": "system", "content": "You are a helpful AI. Please respond in valid JSON format."})
+            
+        logger.info(f"🚀 Calling Azure OpenAI (Model: {AZURE_OPENAI_DEPLOYMENT})...")
+        
+        response = client.chat.completions.create(
+            model=AZURE_OPENAI_DEPLOYMENT, # Use deployment from config
+            messages=messages,
+            temperature=temperature,
+            max_tokens=4096, # Adjust as needed
+            response_format={"type": "json_object"} if format_json else None
         )
-        resp.raise_for_status()
-        data = resp.json()
-        return data.get("response", "").strip()
+        
+        return response.choices[0].message.content.strip()
+        
     except Exception as e:
-        logger.error(f"Ollama chat failed: {e}")
+        logger.error(f"❌ Azure OpenAI Chat failed: {e}")
         return ""
 
 
@@ -747,12 +740,14 @@ def _rag_retrieve(query: str, k: int = 5) -> List[Dict]:
 
         client = get_qdrant_client()
         # Search ONLY in KB collection (case studies are in separate collection)
-        results = client.search(
+        # Use query_points instead of deprecated search
+        search_result = client.query_points(
             collection_name=QDRANT_COLLECTION,  # KB documents only, no case studies
-            query_vector=q_emb,
+            query=q_emb,
             limit=k,
             with_payload=True
         )
+        results = search_result.points
 
         logger.info(f"🔍 Searching knowledge base (Qdrant) - found {len(results)} results (KB documents only, excluding case studies)")
 
@@ -1122,8 +1117,8 @@ def _build_scope_prompt(rfp_text: str, kb_chunks: List[str], project=None, quest
         "- Include all relevant roles and activities that ensure delivery of the project scope."
         "- Keep all field names exactly as in the schema.\n"
         f"{user_context}"
-        f"RFP / Project Files Content:\n{rfp_text}\n\n"
-        f"Knowledge Base Context (for enrichment only):\n{kb_context}\n"
+        f"RFP / Project Files Content:\n{rfp_text[:8000]}... [TRUNCATED for Memory Safety]\n\n"
+        f"Knowledge Base Context (for enrichment only):\n{str(kb_context)[:2000]}... [TRUNCATED]\n"
         f"Clarification Q&A (User-confirmed answers take highest priority)\n"
         f"Use these answers to override or clarify any ambiguous or conflicting information.\n"
         f"Do NOT hallucinate beyond these facts.\n\n"
@@ -1135,7 +1130,9 @@ def _build_scope_prompt(rfp_text: str, kb_chunks: List[str], project=None, quest
         "2. ✅ MUST include 'activities' array with at least 8-15 activities (THIS IS MANDATORY!)\n"
         "3. ✅ MUST include 'resourcing_plan' as empty array []\n"
         "4. ✅ MUST include 'project_summary' object with all 4 fields\n"
-        "5. ❌ DO NOT return only metadata without activities\n"
+        "5. ❌ PROHIBITED: Returning empty 'activities' array []. You MUST generate at least 5 activities.\n"
+        "6. ❌ DO NOT nest activities inside 'phases' - put them directly in 'activities' array\n"
+        "7. ❌ DO NOT wrap the response in 'data' or 'project' keys - use the exact schema above\n"
         "6. ❌ DO NOT nest activities inside 'phases' - put them directly in 'activities' array\n"
         "7. ❌ DO NOT wrap the response in 'data' or 'project' keys - use the exact schema above\n"
         "8. 🎯 Your response MUST be valid JSON that starts with '{' and ends with '}'\n\n"
@@ -1171,10 +1168,10 @@ Do NOT reuse example categories blindly — derive them from the content itself.
 - Duration: {duration}
 
 ### RFP Content
-{rfp_text}
+{rfp_text[:8000]}... [TRUNCATED for Memory Safety]
 
 ### Knowledge Base Context
-{kb_chunks}
+{str(kb_chunks)[:2000]}... [TRUNCATED]
 
 ---
 
@@ -1271,6 +1268,18 @@ def _extract_questions_from_text(raw_text: str) -> list[dict]:
                 "category": "General",
                 "items": [{"question": str(q), "user_understanding": "", "comment": ""} for q in parsed]
             }]
+    except Exception:
+        pass
+
+    # Fallback to direct regex JSON extraction if _extract_json failed
+    try:
+        json_match = re.search(r"\{.*\}", raw_text, re.DOTALL)
+        if json_match:
+             potential_json = json.loads(json_match.group(0))
+             # If we successfully parsed JSON, recursively call this function or format it
+             # For now, let's just see if we can extract questions from it manually
+             if "questions" in potential_json and isinstance(potential_json["questions"], list):
+                 return _extract_questions_from_text(json.dumps(potential_json)) # Re-process cleanly
     except Exception:
         pass
 
@@ -1423,7 +1432,10 @@ async def generate_project_questions(db: AsyncSession, project) -> dict:
 
     # ---------- Query Ollama ----------
     try:
-        raw_text = await anyio.to_thread.run_sync(lambda: ollama_chat(prompt, temperature=0.8))
+        raw_text = await anyio.to_thread.run_sync(
+            lambda: ollama_chat(prompt, temperature=0.7, format_json=True)
+        )
+        logger.error(f"DEBUG - RAW QUESTIONS OUTPUT: {raw_text[:1000]}...") # Debug log
         questions = _extract_questions_from_text(raw_text)
         total_q = sum(len(cat["items"]) for cat in questions)
         logger.info(f" Generated {total_q} questions under {len(questions)} categories for project {project.id}")

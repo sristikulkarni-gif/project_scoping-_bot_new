@@ -7,6 +7,7 @@ export const ETLProvider = ({ children }) => {
   const [pendingUpdates, setPendingUpdates] = useState([]);
   const [processingJobs, setProcessingJobs] = useState([]);
   const [kbDocuments, setKBDocuments] = useState([]);
+  const [pendingCaseStudies, setPendingCaseStudies] = useState([]);
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -159,11 +160,65 @@ export const ETLProvider = ({ children }) => {
     }
   }, [loadStats, loadProcessingJobs, loadKBDocuments]);
 
+  // Load pending case studies
+  const loadPendingCaseStudies = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const { data } = await etlApi.getPendingCaseStudies();
+      setPendingCaseStudies(data || []);
+      return data;
+    } catch (err) {
+      console.error("Failed to load pending case studies:", err);
+      // Don't set error globally for this, just log it, as it's a separate tab
+      return [];
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  // Approve case study
+  const approveCaseStudy = useCallback(async (pendingId, adminComment = null) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const { data } = await etlApi.approveCaseStudy(pendingId, adminComment);
+      await loadPendingCaseStudies(); // Refresh list
+      await loadStats(); // Refresh stats
+      return data;
+    } catch (err) {
+      console.error("Failed to approve case study:", err);
+      setError(err.response?.data?.detail || "Failed to approve case study");
+      throw err;
+    } finally {
+      setLoading(false);
+    }
+  }, [loadPendingCaseStudies]);
+
+  // Reject case study
+  const rejectCaseStudy = useCallback(async (pendingId, adminComment = null) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const { data } = await etlApi.rejectCaseStudy(pendingId, adminComment);
+      await loadPendingCaseStudies(); // Refresh list
+      await loadStats(); // Refresh stats
+      return data;
+    } catch (err) {
+      console.error("Failed to reject case study:", err);
+      setError(err.response?.data?.detail || "Failed to reject case study");
+      throw err;
+    } finally {
+      setLoading(false);
+    }
+  }, [loadPendingCaseStudies]);
+
   const value = {
     // State
     pendingUpdates,
     processingJobs,
     kbDocuments,
+    pendingCaseStudies,
     stats,
     loading,
     error,
@@ -176,6 +231,9 @@ export const ETLProvider = ({ children }) => {
     rejectPendingUpdate,
     loadProcessingJobs,
     loadKBDocuments,
+    loadPendingCaseStudies,
+    approveCaseStudy,
+    rejectCaseStudy,
     loadStats,
     resetFailedDocuments,
   };

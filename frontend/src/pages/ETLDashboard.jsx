@@ -10,6 +10,7 @@ import {
   AlertCircle,
   TrendingUp,
   Play,
+  BookOpen,
 } from "lucide-react";
 
 export default function ETLDashboard() {
@@ -17,6 +18,7 @@ export default function ETLDashboard() {
     pendingUpdates,
     processingJobs,
     kbDocuments,
+    pendingCaseStudies,
     stats,
     loading,
     error,
@@ -27,6 +29,9 @@ export default function ETLDashboard() {
     rejectPendingUpdate,
     loadProcessingJobs,
     loadKBDocuments,
+    loadPendingCaseStudies,
+    approveCaseStudy,
+    rejectCaseStudy,
     loadStats,
     resetFailedDocuments,
   } = useETL();
@@ -43,7 +48,9 @@ export default function ETLDashboard() {
     loadStats();
     loadPendingUpdates();
     loadProcessingJobs();
+    loadProcessingJobs();
     loadKBDocuments();
+    loadPendingCaseStudies();
 
     // Check if scan was running when page loaded
     initializeScanState();
@@ -54,7 +61,7 @@ export default function ETLDashboard() {
         clearInterval(window.etlPollingInterval);
       }
     };
-  }, [loadStats, loadPendingUpdates, loadProcessingJobs, loadKBDocuments]);
+  }, [loadStats, loadPendingUpdates, loadProcessingJobs, loadKBDocuments, loadPendingCaseStudies]);
 
   // Initialize scan state on mount (check if scan is running)
   const initializeScanState = async () => {
@@ -110,7 +117,9 @@ export default function ETLDashboard() {
         loadStats();
         loadPendingUpdates();
         loadProcessingJobs();
+        loadProcessingJobs();
         loadKBDocuments();
+        loadPendingCaseStudies();
 
         // Stop polling
         clearInterval(window.etlPollingInterval);
@@ -178,9 +187,44 @@ export default function ETLDashboard() {
     }
   };
 
+  const handleApproveCaseStudy = async (pendingId) => {
+    if (!confirm("Are you sure you want to approve this case study? It will be added to the Knowledge Base.")) return;
+
+    setProcessingId(pendingId);
+    try {
+      await approveCaseStudy(pendingId, adminComment || null);
+      alert("Case Study approved successfully!");
+      setAdminComment("");
+      setSelectedPending(null);
+    } catch (err) {
+      alert(`Failed to approve: ${err.message}`);
+    } finally {
+      setProcessingId(null);
+    }
+  };
+
+  const handleRejectCaseStudy = async (pendingId) => {
+    if (!confirm("Are you sure you want to reject and delete this case study?")) return;
+
+    setProcessingId(pendingId);
+    try {
+      await rejectCaseStudy(pendingId, adminComment || null);
+      alert("Case Study rejected successfully!");
+      setAdminComment("");
+      setSelectedPending(null);
+    } catch (err) {
+      alert(`Failed to reject: ${err.message}`);
+    } finally {
+      setProcessingId(null);
+    }
+  };
+
   const handleRefresh = () => {
     loadStats();
-    if (activeTab === "pending") loadPendingUpdates();
+    if (activeTab === "pending") {
+      loadPendingUpdates();
+      loadPendingCaseStudies();
+    }
     if (activeTab === "jobs") loadProcessingJobs();
     if (activeTab === "documents") loadKBDocuments();
   };
@@ -278,11 +322,10 @@ export default function ETLDashboard() {
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
-              className={`flex items-center gap-2 px-4 py-3 font-medium transition-all duration-200 border-b-2 ${
-                activeTab === tab.id
-                  ? "border-primary text-primary dark:border-dark-primary dark:text-dark-primary"
-                  : "border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
-              }`}
+              className={`flex items-center gap-2 px-4 py-3 font-medium transition-all duration-200 border-b-2 ${activeTab === tab.id
+                ? "border-primary text-primary dark:border-dark-primary dark:text-dark-primary"
+                : "border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+                }`}
             >
               <tab.icon className="w-4 h-4" />
               {tab.label}
@@ -335,135 +378,197 @@ export default function ETLDashboard() {
           </div>
         )}
 
-        {/* Pending Approvals Tab */}
+        {/* Pending Approvals Tab - Consolidated */}
         {activeTab === "pending" && (
           <div className="space-y-4">
-            {pendingUpdates.length === 0 ? (
+            {pendingUpdates.length === 0 && pendingCaseStudies.length === 0 ? (
               <div className="text-center py-12 text-gray-500 dark:text-gray-400">
                 <Clock className="w-16 h-16 mx-auto mb-4 opacity-30" />
                 <p className="text-lg font-medium">No pending approvals</p>
-                <p className="text-sm">All updates have been reviewed</p>
+                <p className="text-sm">All updates and case studies have been reviewed</p>
               </div>
             ) : (
-              pendingUpdates.map((update) => (
-                <div
-                  key={update.id}
-                  className="bg-white dark:bg-dark-surface rounded-2xl p-6 border border-gray-200 dark:border-gray-700 shadow-sm"
-                >
-                  <div className="flex items-start justify-between mb-4">
-                    <div className="flex-1">
-                      <h3 className="text-lg font-bold text-gray-900 dark:text-gray-100 mb-1">
-                        {update.document.file_name}
-                      </h3>
-                      <p className="text-sm text-gray-600 dark:text-gray-400">
-                        {update.document.blob_path}
-                      </p>
-                    </div>
-                    <span
-                      className={`px-3 py-1 rounded-full text-xs font-semibold ${
-                        update.update_type === "duplicate"
-                          ? "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"
-                          : update.update_type === "update"
-                          ? "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400"
-                          : "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400"
-                      }`}
-                    >
-                      {update.update_type.toUpperCase()}
-                    </span>
-                  </div>
+              // Combined list of Pending Updates and Case Studies
+              [
+                // KB Updates
+                ...pendingUpdates.map(u => ({ ...u, type: 'kb_update' })),
+                // Case Studies (with safe fallback if not array)
+                ...(Array.isArray(pendingCaseStudies) ? pendingCaseStudies : []).map(c => ({ ...c, type: 'case_study' }))
+              ]
+                .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+                .map((item) => (
+                  <div
+                    key={item.id}
+                    className="bg-white dark:bg-dark-surface rounded-2xl p-6 border border-gray-200 dark:border-gray-700 shadow-sm"
+                  >
+                    {/* --- Header Difference based on Type --- */}
+                    <div className="flex items-start justify-between mb-4">
+                      <div className="flex-1">
+                        {item.type === 'kb_update' ? (
+                          <>
+                            <h3 className="text-lg font-bold text-gray-900 dark:text-gray-100 mb-1">
+                              {item.document.file_name}
+                            </h3>
+                            <p className="text-sm text-gray-600 dark:text-gray-400">
+                              {item.document.blob_path}
+                            </p>
+                          </>
+                        ) : (
+                          <>
+                            <div className="flex items-center gap-2 mb-1">
+                              <h3 className="text-lg font-bold text-gray-900 dark:text-gray-100">
+                                {item.client_name}
+                              </h3>
+                              {item.generated_by_llm && (
+                                <span className="px-2 py-0.5 rounded text-xs bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300 font-medium">
+                                  AI Generated
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                              Project: {item.project_title}
+                            </p>
+                            <p className="text-sm text-gray-500 dark:text-gray-400">
+                              {item.file_name}
+                            </p>
+                          </>
+                        )}
+                      </div>
 
-                  <div className="grid grid-cols-2 gap-4 mb-4 text-sm">
-                    <div>
-                      <span className="text-gray-500 dark:text-gray-400">Similarity:</span>
-                      <span className="ml-2 font-semibold text-gray-900 dark:text-gray-100">
-                        {(update.similarity_score * 100).toFixed(1)}%
-                      </span>
-                    </div>
-                    <div>
-                      <span className="text-gray-500 dark:text-gray-400">Created:</span>
-                      <span className="ml-2 font-semibold text-gray-900 dark:text-gray-100">
-                        {new Date(update.created_at).toLocaleDateString()}
-                      </span>
-                    </div>
-                  </div>
-
-                  <div className="mb-4">
-                    <p className="text-sm text-gray-700 dark:text-gray-300 mb-2">
-                      <strong>Reason:</strong> {update.reason}
-                    </p>
-                    {update.related_documents && update.related_documents.length > 0 && (
-                      <details className="text-sm">
-                        <summary className="cursor-pointer text-primary dark:text-dark-primary font-medium">
-                          View {update.related_documents.length} similar document(s)
-                        </summary>
-                        <ul className="mt-2 ml-4 space-y-1">
-                          {update.related_documents.map((doc, idx) => (
-                            <li key={idx} className="text-gray-600 dark:text-gray-400">
-                              • {doc.file_name} ({(doc.similarity_score * 100).toFixed(1)}%)
-                            </li>
-                          ))}
-                        </ul>
-                      </details>
-                    )}
-                  </div>
-
-                  {selectedPending === update.id && (
-                    <div className="mb-4">
-                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                        Admin Comment (optional)
-                      </label>
-                      <textarea
-                        value={adminComment}
-                        onChange={(e) => setAdminComment(e.target.value)}
-                        placeholder="Add a comment about this decision..."
-                        className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100"
-                        rows={2}
-                      />
-                    </div>
-                  )}
-
-                  <div className="flex items-center gap-3">
-                    {selectedPending === update.id ? (
-                      <>
-                        <button
-                          onClick={() => handleApprove(update.id)}
-                          disabled={processingId === update.id}
-                          className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50"
+                      {/* --- Badge Difference --- */}
+                      {item.type === 'kb_update' ? (
+                        <span
+                          className={`px-3 py-1 rounded-full text-xs font-semibold ${item.update_type === "duplicate"
+                            ? "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"
+                            : item.update_type === "update"
+                              ? "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400"
+                              : "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400"
+                            }`}
                         >
-                          <CheckCircle className="w-4 h-4" />
-                          {processingId === update.id ? "Approving..." : "Confirm Approve"}
-                        </button>
-                        <button
-                          onClick={() => handleReject(update.id)}
-                          disabled={processingId === update.id}
-                          className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50"
-                        >
-                          <XCircle className="w-4 h-4" />
-                          {processingId === update.id ? "Rejecting..." : "Confirm Reject"}
-                        </button>
-                        <button
-                          onClick={() => {
-                            setSelectedPending(null);
-                            setAdminComment("");
-                          }}
-                          className="px-4 py-2 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
-                        >
-                          Cancel
-                        </button>
-                      </>
+                          {item.update_type.toUpperCase()}
+                        </span>
+                      ) : (
+                        <span className="px-3 py-1 rounded-full text-xs font-semibold bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400">
+                          CASE STUDY
+                        </span>
+                      )}
+                    </div>
+
+                    {/* --- Content Difference --- */}
+                    {item.type === 'kb_update' ? (
+                      <div className="grid grid-cols-2 gap-4 mb-4 text-sm">
+                        <div>
+                          <span className="text-gray-500 dark:text-gray-400">Similarity:</span>
+                          <span className="ml-2 font-semibold text-gray-900 dark:text-gray-100">
+                            {(item.similarity_score * 100).toFixed(1)}%
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-gray-500 dark:text-gray-400">Created:</span>
+                          <span className="ml-2 font-semibold text-gray-900 dark:text-gray-100">
+                            {new Date(item.created_at).toLocaleDateString()}
+                          </span>
+                        </div>
+                      </div>
                     ) : (
-                      <>
-                        <button
-                          onClick={() => setSelectedPending(update.id)}
-                          className="flex items-center gap-2 px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors"
-                        >
-                          Review
-                        </button>
-                      </>
+                      <div className="mb-4 bg-gray-50 dark:bg-gray-800/50 rounded-lg p-4">
+                        <h4 className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-2">Overview</h4>
+                        <p className="text-sm text-gray-600 dark:text-gray-400 line-clamp-3">
+                          {item.overview}
+                        </p>
+                        <div className="mt-3 grid grid-cols-2 gap-4">
+                          <div>
+                            <h4 className="text-xs font-semibold text-gray-500 uppercase">Solution</h4>
+                            <p className="text-sm text-gray-700 dark:text-gray-300 line-clamp-2">{item.solution}</p>
+                          </div>
+                          <div>
+                            <h4 className="text-xs font-semibold text-gray-500 uppercase">Impact</h4>
+                            <p className="text-sm text-gray-700 dark:text-gray-300 line-clamp-2">{item.impact}</p>
+                          </div>
+                        </div>
+                      </div>
                     )}
+
+                    {item.type === 'kb_update' && (
+                      <div className="mb-4">
+                        <p className="text-sm text-gray-700 dark:text-gray-300 mb-2">
+                          <strong>Reason:</strong> {item.reason}
+                        </p>
+                        {item.related_documents && item.related_documents.length > 0 && (
+                          <details className="text-sm">
+                            <summary className="cursor-pointer text-primary dark:text-dark-primary font-medium">
+                              View {item.related_documents.length} similar document(s)
+                            </summary>
+                            <ul className="mt-2 ml-4 space-y-1">
+                              {item.related_documents.map((doc, idx) => (
+                                <li key={idx} className="text-gray-600 dark:text-gray-400">
+                                  • {doc.file_name} ({(doc.similarity_score * 100).toFixed(1)}%)
+                                </li>
+                              ))}
+                            </ul>
+                          </details>
+                        )}
+                      </div>
+                    )}
+
+                    {/* --- Action Buttons (Shared Logic) --- */}
+                    {selectedPending === item.id && (
+                      <div className="mb-4">
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                          Admin Comment (optional)
+                        </label>
+                        <textarea
+                          value={adminComment}
+                          onChange={(e) => setAdminComment(e.target.value)}
+                          placeholder="Add a comment about this decision..."
+                          className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100"
+                          rows={2}
+                        />
+                      </div>
+                    )}
+
+                    <div className="flex items-center gap-3">
+                      {selectedPending === item.id ? (
+                        <>
+                          <button
+                            onClick={() => item.type === 'kb_update' ? handleApprove(item.id) : handleApproveCaseStudy(item.id)}
+                            disabled={processingId === item.id}
+                            className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50"
+                          >
+                            <CheckCircle className="w-4 h-4" />
+                            {processingId === item.id ? "Approving..." : "Confirm Approve"}
+                          </button>
+                          <button
+                            onClick={() => item.type === 'kb_update' ? handleReject(item.id) : handleRejectCaseStudy(item.id)}
+                            disabled={processingId === item.id}
+                            className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50"
+                          >
+                            <XCircle className="w-4 h-4" />
+                            {processingId === item.id ? "Rejecting..." : "Confirm Reject"}
+                          </button>
+                          <button
+                            onClick={() => {
+                              setSelectedPending(null);
+                              setAdminComment("");
+                            }}
+                            className="px-4 py-2 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+                          >
+                            Cancel
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          <button
+                            onClick={() => setSelectedPending(item.id)}
+                            className="flex items-center gap-2 px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors"
+                          >
+                            Review {item.type === 'case_study' ? 'Case Study' : ''}
+                          </button>
+                        </>
+                      )}
+                    </div>
                   </div>
-                </div>
-              ))
+                ))
             )}
           </div>
         )}
@@ -497,59 +602,58 @@ export default function ETLDashboard() {
 
             <div className="overflow-x-auto">
               <table className="professional-table w-full">
-              <thead>
-                <tr>
-                  <th>Document</th>
-                  <th>Status</th>
-                  <th>Chunks</th>
-                  <th>Vectors</th>
-                  <th>Started</th>
-                  <th>Completed</th>
-                  <th>Error</th>
-                </tr>
-              </thead>
-              <tbody>
-                {processingJobs.length === 0 ? (
+                <thead>
                   <tr>
-                    <td colSpan={7} className="text-center py-8 text-gray-500 dark:text-gray-400">
-                      No processing jobs found
-                    </td>
+                    <th>Document</th>
+                    <th>Status</th>
+                    <th>Chunks</th>
+                    <th>Vectors</th>
+                    <th>Started</th>
+                    <th>Completed</th>
+                    <th>Error</th>
                   </tr>
-                ) : (
-                  processingJobs.map((job) => (
-                    <tr key={job.id}>
-                      <td className="font-medium">{job.document?.file_name || "Unknown"}</td>
-                      <td>
-                        <span
-                          className={`badge ${
-                            job.status === "completed"
-                              ? "badge-success"
-                              : job.status === "failed"
-                              ? "badge-danger"
-                              : job.status === "processing"
-                              ? "badge-warning"
-                              : "badge-info"
-                          }`}
-                        >
-                          {job.status}
-                        </span>
-                      </td>
-                      <td>{job.chunks_processed || 0}</td>
-                      <td>{job.vectors_created || 0}</td>
-                      <td className="text-sm text-gray-600 dark:text-gray-400">
-                        {job.started_at ? new Date(job.started_at).toLocaleString() : "-"}
-                      </td>
-                      <td className="text-sm text-gray-600 dark:text-gray-400">
-                        {job.completed_at ? new Date(job.completed_at).toLocaleString() : "-"}
-                      </td>
-                      <td className="text-sm text-red-600 dark:text-red-400">
-                        {job.error_message || "-"}
+                </thead>
+                <tbody>
+                  {processingJobs.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="text-center py-8 text-gray-500 dark:text-gray-400">
+                        No processing jobs found
                       </td>
                     </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
+                  ) : (
+                    processingJobs.map((job) => (
+                      <tr key={job.id}>
+                        <td className="font-medium">{job.document?.file_name || "Unknown"}</td>
+                        <td>
+                          <span
+                            className={`badge ${job.status === "completed"
+                              ? "badge-success"
+                              : job.status === "failed"
+                                ? "badge-danger"
+                                : job.status === "processing"
+                                  ? "badge-warning"
+                                  : "badge-info"
+                              }`}
+                          >
+                            {job.status}
+                          </span>
+                        </td>
+                        <td>{job.chunks_processed || 0}</td>
+                        <td>{job.vectors_created || 0}</td>
+                        <td className="text-sm text-gray-600 dark:text-gray-400">
+                          {job.started_at ? new Date(job.started_at).toLocaleString() : "-"}
+                        </td>
+                        <td className="text-sm text-gray-600 dark:text-gray-400">
+                          {job.completed_at ? new Date(job.completed_at).toLocaleString() : "-"}
+                        </td>
+                        <td className="text-sm text-red-600 dark:text-red-400">
+                          {job.error_message || "-"}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
             </div>
           </div>
         )}

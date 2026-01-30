@@ -2,6 +2,7 @@ import axios from "axios";
 
 const api = axios.create({
   baseURL: "/api",
+  timeout: 600000, // 10 minutes (for slow local CPU inference)
   withCredentials: false,
 });
 
@@ -12,7 +13,7 @@ api.interceptors.request.use((config) => {
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
-  } catch {}
+  } catch { }
   return config;
 });
 

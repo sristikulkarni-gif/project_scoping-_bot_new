@@ -21,6 +21,7 @@ logging.getLogger("azure.core.pipeline.policies.http_logging_policy").setLevel(l
 logging.getLogger("azure.storage.blob").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
+# Trigger reload for collection recreation
 
 # ---------- App Init ----------
 app = FastAPI(

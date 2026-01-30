@@ -1,0 +1,88 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  db:
+    image: postgres:15-alpine
+    container_name: scopebot-db
+    restart: always
+    environment:
+      POSTGRES_USER: scopebot
+      POSTGRES_PASSWORD: karan
+      POSTGRES_DB: scopebot_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - scopebot-network
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U scopebot -d scopebot_db" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Qdrant Vector Database
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: scopebot-qdrant
+    restart: always
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant_storage:/qdrant/storage
+    networks:
+      - scopebot-network
+
+  # Backend (FastAPI)
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: scopebot-backend
+    restart: always
+    depends_on:
+      db:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./backend/.env
+    environment:
+      # Override DB Host to point to docker container
+      DATABASE_URL: postgresql+asyncpg://scopebot:karan@db:5432/scopebot_db
+      # Override Qdrant Host
+      QDRANT_HOST: qdrant
+      # Point Ollama to the HOST machine (since it runs locally outside docker)
+      # On Linux, host.docker.internal requires extra config or --add-host (added below)
+      OLLAMA_HOST: http://host.docker.internal:11434
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - scopebot-network
+    volumes:
+      - ./backend/uploads:/app/uploads # Persist uploads if any local storage used
+
+  # Frontend (React + Nginx)
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: scopebot-frontend
+    restart: always
+    depends_on:
+      - backend
+    ports:
+      - "3000:80"
+    networks:
+      - scopebot-network
+
+networks:
+  scopebot-network:
+    driver: bridge
+
+volumes:
+  pgdata:
+  qdrant_storage:

@@ -381,12 +381,12 @@ class ETLPipeline:
             query_vector = embeddings[0]
 
             # Search Qdrant for similar vectors (KB collection only, no case studies)
-            search_results = self.qdrant_client.search(
+            search_results = self.qdrant_client.query_points(
                 collection_name=QDRANT_COLLECTION,  # Only search KB documents
-                query_vector=query_vector,
+                query=query_vector,
                 limit=5,
                 score_threshold=self.similarity_threshold
-            )
+            ).points
 
             if not search_results:
                 return []

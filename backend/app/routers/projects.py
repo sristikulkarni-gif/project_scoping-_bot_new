@@ -492,11 +492,11 @@ async def get_related_case_study(
         logger.info(f"📚 Searching for case studies in separate collection: {CASE_STUDY_COLLECTION}")
 
         # First search without threshold to see what we have
-        all_results = qdrant_client.search(
+        all_results = qdrant_client.query_points(
             collection_name=CASE_STUDY_COLLECTION,
-            query_vector=query_vector,
+            query=query_vector,
             limit=1
-        )
+        ).points
 
         if all_results and len(all_results) > 0:
             best_score = float(all_results[0].score)
@@ -511,12 +511,12 @@ async def get_related_case_study(
         
         # Only search if we have results
         if best_score > 0:
-            search_results = qdrant_client.search(
+            search_results = qdrant_client.query_points(
                 collection_name=CASE_STUDY_COLLECTION,  # Dedicated case study collection
-                query_vector=query_vector,
+                query=query_vector,
                 limit=1,
                 score_threshold=SIMILARITY_THRESHOLD
-            )
+            ).points
         else:
             search_results = []  # Empty Qdrant, skip search
 

@@ -72,6 +72,27 @@ const etlApi = {
    * Reset failed documents to allow reprocessing
    */
   resetFailedDocuments: () => api.post("/etl/reset-failed-documents"),
+
+  /**
+   * Get pending generated case studies
+   */
+  getPendingCaseStudies: () => api.get("/case_studies/pending"),
+
+  /**
+   * Approve a pending case study
+   * @param {string} pendingId - UUID of the pending case study
+   * @param {string} adminComment - Optional admin comment
+   */
+  approveCaseStudy: (pendingId, adminComment = null) =>
+    api.post(`/case_studies/${pendingId}/approve`, { admin_comment: adminComment }),
+
+  /**
+   * Reject a pending case study
+   * @param {string} pendingId - UUID of the pending case study
+   * @param {string} adminComment - Optional admin comment
+   */
+  rejectCaseStudy: (pendingId, adminComment = null) =>
+    api.post(`/case_studies/${pendingId}/reject`, { admin_comment: adminComment }),
 };
 
 export default etlApi;

@@ -16,6 +16,7 @@ import {
   Package,
   XCircle,
   Trash2,
+  Calendar, // Added for Gantt
 } from "lucide-react";
 import { Document, Page, pdfjs } from "react-pdf";
 import "react-pdf/dist/Page/AnnotationLayer.css";
@@ -31,6 +32,7 @@ pdfjs.GlobalWorkerOptions.workerSrc = workerSrc;
 
 const TABS = [
   { key: "overview", label: "Project Overview", icon: FileText },
+  { key: "gantt", label: "Gantt Timeline", icon: Calendar }, // New Gantt Tab
   { key: "activities", label: "Activities Breakdown", icon: FileText },
   { key: "resourcing", label: "Resourcing Plan", icon: FileText },
   { key: "architecture", label: "Architecture Diagram", icon: FileText },
@@ -174,8 +176,8 @@ export default function Exports() {
     setRegenPrompt(e.target.value);
     const el = textareaRef.current;
     if (el) {
-      el.style.height = "auto"; 
-      el.style.height = `${el.scrollHeight}px`; 
+      el.style.height = "auto";
+      el.style.height = `${el.scrollHeight}px`;
     }
   };
   const updateParsedDraft = (section, newRows) => {
@@ -497,7 +499,7 @@ export default function Exports() {
     // Run immediately whenever this component mounts or URL changes
     refreshScope();
   }, [id, location.key, getFinalizedScope]);
-    
+
   // ---------- Handle Finalize Scope ----------
   const handleFinalize = async () => {
     if (!parsedDraft) return;
@@ -513,7 +515,7 @@ export default function Exports() {
       //  Fetch latest finalized data immediately
       const finalizedData = await getFinalizedScope(id);
       if (finalizedData) {
-        skipResetRef.current = true; 
+        skipResetRef.current = true;
         setJsonText(JSON.stringify(finalizedData, null, 2));
       }
       setPreviewPdfUrl(null);
@@ -680,16 +682,14 @@ export default function Exports() {
             prompts.map((msg) => (
               <div
                 key={msg.id}
-                className={`flex ${
-                  msg.role === "user" ? "justify-end" : "justify-start"
-                }`}
+                className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"
+                  }`}
               >
                 <div
-                  className={`rounded-2xl px-4 py-2 text-sm max-w-[75%] leading-relaxed shadow-sm ${
-                    msg.role === "user"
-                      ? "bg-emerald-600 text-white rounded-br-none"
-                      : "bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-200 rounded-bl-none"
-                  }`}
+                  className={`rounded-2xl px-4 py-2 text-sm max-w-[75%] leading-relaxed shadow-sm ${msg.role === "user"
+                    ? "bg-emerald-600 text-white rounded-br-none"
+                    : "bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-200 rounded-bl-none"
+                    }`}
                 >
                   {msg.message}
                   <div className="text-[10px] text-gray-400 mt-1 text-right">
@@ -731,11 +731,10 @@ export default function Exports() {
               type="button"
               onClick={handleRegenerate}
               disabled={regenLoading || !parsedDraft}
-              className={`p-3.5 rounded-full transition-all ${
-                regenLoading
-                  ? "bg-emerald-300 cursor-not-allowed"
-                  : "bg-emerald-600 hover:bg-emerald-700 active:scale-95"
-              } text-white shadow-md`}
+              className={`p-3.5 rounded-full transition-all ${regenLoading
+                ? "bg-emerald-300 cursor-not-allowed"
+                : "bg-emerald-600 hover:bg-emerald-700 active:scale-95"
+                } text-white shadow-md`}
             >
               {regenLoading ? (
                 <Loader2 className="w-5 h-5 animate-spin" />
@@ -759,17 +758,17 @@ export default function Exports() {
 
       </div>
       <div className="flex justify-end border-t border-gray-200 px-3 py-0.5">
-          <button
-            type="button"
-            onClick={async () => {
-              if (!window.confirm("Clear entire chat history?")) return;
-              await clearPrompts(id);
-            }}
-            className="text-xs text-red-500 hover:text-red-700"
-          >
-            Clear Chat
-          </button>
-        </div>
+        <button
+          type="button"
+          onClick={async () => {
+            if (!window.confirm("Clear entire chat history?")) return;
+            await clearPrompts(id);
+          }}
+          className="text-xs text-red-500 hover:text-red-700"
+        >
+          Clear Chat
+        </button>
+      </div>
 
 
       {/* Tabs */}
@@ -778,17 +777,16 @@ export default function Exports() {
           <button
             key={t.key}
             onClick={() => setActiveTab(t.key)}
-            className={`flex items-center gap-2 px-4 py-2 border-b-2 transition ${
-              activeTab === t.key
-                ? "border-primary text-primary font-semibold"
-                : "border-transparent text-gray-500 hover:text-primary"
-            }`}
+            className={`flex items-center gap-2 px-4 py-2 border-b-2 transition ${activeTab === t.key
+              ? "border-primary text-primary font-semibold"
+              : "border-transparent text-gray-500 hover:text-primary"
+              }`}
           >
             <t.icon className="w-5 h-5" /> {t.label}
           </button>
         ))}
       </div>
-      
+
       {/* Section Preview Tabs */}
       <ScopePreviewTabs activeTab={activeTab} parsedDraft={parsedDraft} />
 
@@ -798,11 +796,10 @@ export default function Exports() {
           type="button"
           onClick={handleFinalize}
           disabled={!parsedDraft || finalizing || isFinalized}
-          className={`px-4 py-2 rounded-lg text-white flex items-center gap-2 ${
-            finalizing || isFinalized
-              ? "bg-emerald-400 cursor-not-allowed"
-              : "bg-emerald-600 hover:bg-emerald-700"
-          }`}
+          className={`px-4 py-2 rounded-lg text-white flex items-center gap-2 ${finalizing || isFinalized
+            ? "bg-emerald-400 cursor-not-allowed"
+            : "bg-emerald-600 hover:bg-emerald-700"
+            }`}
         >
           {finalizing ? (
             <>

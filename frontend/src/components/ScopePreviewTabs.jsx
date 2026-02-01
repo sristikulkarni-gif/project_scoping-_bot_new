@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import projectApi from '../api/projectApi';
+import GanttChart from './GanttChart';
 
 /**
  * Component to render scope section previews
@@ -389,6 +390,7 @@ const ScopePreviewTabs = ({ activeTab, parsedDraft }) => {
         sectionData = findField('overview', 'project_overview', 'Overview', 'Project Overview', 'project overview');
         break;
       case 'activities':
+      case 'gantt': // Gantt tab uses same data as activities
         sectionData = findField('activities', 'activities_breakdown', 'Activities Breakdown', 'Activities', 'activity_breakdown', 'activities breakdown');
         break;
       case 'resourcing':
@@ -512,6 +514,20 @@ const ScopePreviewTabs = ({ activeTab, parsedDraft }) => {
             <p className="text-sm text-gray-500 dark:text-gray-400 mt-2">
               Upload case studies to the Knowledge Base to enable matching.
             </p>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  if (activeTab === 'gantt') {
+    return (
+      <div className="p-6 bg-white dark:bg-dark-card rounded-lg border border-gray-200 dark:border-gray-700 overflow-x-auto">
+        {sectionData ? (
+          <GanttChart activities={sectionData} />
+        ) : (
+          <div className="text-center text-gray-500 italic py-8">
+            <p>No activity data available for Gantt chart.</p>
           </div>
         )}
       </div>

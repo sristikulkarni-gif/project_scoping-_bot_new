@@ -72,31 +72,57 @@ async def approve_case_study(
         await azure_blob.upload_bytes(pdf_bytes, approved_blob_name, "knowledge_base")
         logger.info(f"✅ Moved PDF: {pending.blob_path} → {approved_blob_name}")
 
-        # 4. Create KnowledgeBaseDocument entry
+        # 4. Create or Update KnowledgeBaseDocument entry
         file_hash = hashlib.sha256(pdf_bytes).hexdigest()
 
-        kb_document = models.KnowledgeBaseDocument(
-            id=uuid.uuid4(),
-            file_name=pending.file_name,
-            blob_path=approved_blob_name,
-            file_hash=file_hash,
-            file_size=len(pdf_bytes),
-            document_type="case_study",
-            case_study_metadata=json.dumps({
+        # Check if it already exists to avoid unique constraint violation
+        existing_kb_result = await db.execute(
+            select(models.KnowledgeBaseDocument).where(
+                models.KnowledgeBaseDocument.blob_path == approved_blob_name
+            )
+        )
+        existing_kb = existing_kb_result.scalar_one_or_none()
+
+        if existing_kb:
+            logger.info(f"⚠️ KB Document already exists for {approved_blob_name}, updating it.")
+            kb_document = existing_kb
+            kb_document.file_hash = file_hash
+            kb_document.file_size = len(pdf_bytes)
+            kb_document.case_study_metadata = json.dumps({
                 "client_name": pending.client_name,
                 "overview": pending.overview,
                 "solution": pending.solution,
                 "impact": pending.impact,
                 "generated_by_llm": True,
                 "approved_at": datetime.utcnow().isoformat()
-            }),
-            is_vectorized=False,
-            vector_count=0
-        )
-        db.add(kb_document)
+            })
+            # Reset vectorization status as we are re-processing
+            kb_document.is_vectorized = False
+            kb_document.vector_count = 0
+        else:
+            kb_document = models.KnowledgeBaseDocument(
+                id=uuid.uuid4(),
+                file_name=pending.file_name,
+                blob_path=approved_blob_name,
+                file_hash=file_hash,
+                file_size=len(pdf_bytes),
+                document_type="case_study",
+                case_study_metadata=json.dumps({
+                    "client_name": pending.client_name,
+                    "overview": pending.overview,
+                    "solution": pending.solution,
+                    "impact": pending.impact,
+                    "generated_by_llm": True,
+                    "approved_at": datetime.utcnow().isoformat()
+                }),
+                is_vectorized=False,
+                vector_count=0
+            )
+            db.add(kb_document)
+        
         await db.flush()
 
-        logger.info(f"✅ Created KB document: {kb_document.id}")
+        logger.info(f"✅ KB document ID: {kb_document.id}")
 
         # 5. Extract text from PDF
         import io

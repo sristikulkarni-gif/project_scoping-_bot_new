@@ -77,6 +77,10 @@ def get_embed_client() -> dict:
 # -------------------------------------------------------------------------
 # Embedding generator
 # -------------------------------------------------------------------------
+
+# -------------------------------------------------------------------------
+# Embedding generator
+# -------------------------------------------------------------------------
 def embed_text_azure(texts: List[str]) -> List[List[float]]:
     """
     Generate embeddings using Azure OpenAI.
@@ -101,8 +105,10 @@ def embed_text_azure(texts: List[str]) -> List[List[float]]:
         logger.error(f"❌ Azure embedding failed: {e}")
         return []
 
-# Alias for backward compatibility
+# Alias: Use Azure for everything now
 embed_text_ollama = embed_text_azure
+
+
 
 # -------------------------------------------------------------------------
 # Qdrant Client

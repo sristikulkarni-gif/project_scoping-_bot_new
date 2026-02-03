@@ -160,6 +160,8 @@ export default function Exports() {
     json: { loading: false, progress: 0, controller: null, downloaded: false },
     excel: { loading: false, progress: 0, controller: null, downloaded: false },
     pdf: { loading: false, progress: 0, controller: null, downloaded: false },
+    pptx: { loading: false, progress: 0, controller: null, downloaded: false },
+    smartPptx: { loading: false, progress: 0, controller: null, downloaded: false },
     all: { loading: false, progress: 0, controller: null, downloaded: false },
   });
   const [regenPrompt, setRegenPrompt] = useState("");
@@ -598,6 +600,14 @@ export default function Exports() {
       "pdf"
     );
 
+  const handleDownloadPptx = () =>
+    downloadFile(
+      "pptx",
+      (opts) => exportApi.exportToPptx(id, opts),
+      parsedDraft?.overview?.["Project Name"] || `project_${id}`,
+      "pptx"
+    );
+
   // ---------- Download All as ZIP ----------
   const handleDownloadAll = async () => {
     const controller = new AbortController();
@@ -860,6 +870,26 @@ export default function Exports() {
             </button>
 
             <button
+              onClick={handleDownloadPptx}
+              disabled={downloadState.pptx.loading || downloadState.pptx.downloaded}
+              className="px-4 py-2 rounded-lg bg-orange-600 hover:bg-orange-700 text-white font-semibold inline-flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {downloadState.pptx.loading ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" /> PPTX
+                </>
+              ) : downloadState.pptx.downloaded ? (
+                <>
+                  <CheckCircle2 className="w-4 h-4" /> PPTX Downloaded
+                </>
+              ) : (
+                <>
+                  <FileText className="w-4 h-4" /> Download PPTX
+                </>
+              )}
+            </button>
+
+            <button
               onClick={handleDownloadExcel}
               disabled={downloadState.excel.loading || downloadState.excel.downloaded}
               className="px-4 py-2 rounded-lg bg-green-600 hover:bg-green-700 text-white font-semibold inline-flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
@@ -875,6 +905,36 @@ export default function Exports() {
               ) : (
                 <>
                   <FileSpreadsheet className="w-4 h-4" /> Download Excel
+                </>
+              )}
+            </button>
+
+            {/* Smart AI Pitch Deck Button */}
+            <button
+              onClick={() => {
+                downloadFile(
+                  "smartPptx",
+                  (opts) => exportApi.exportToSmartPptx(id, opts),
+                  (parsedDraft?.overview?.["Project Name"] || `project_${id}`) + "_PITCH_DECK",
+                  "pptx"
+                );
+              }}
+              disabled={downloadState.smartPptx?.loading || downloadState.smartPptx?.downloaded}
+              className="px-4 py-2 rounded-lg bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white font-semibold inline-flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed shadow-md"
+              title="Generate AI-driven Pitch Deck using LLM"
+            >
+              {downloadState.smartPptx?.loading ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" /> Generating Pitch Deck...
+                </>
+              ) : downloadState.smartPptx?.downloaded ? (
+                <>
+                  <CheckCircle2 className="w-4 h-4" /> Deck Downloaded
+                </>
+              ) : (
+                <>
+                  <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" /></svg>
+                  AI Pitch Deck
                 </>
               )}
             </button>

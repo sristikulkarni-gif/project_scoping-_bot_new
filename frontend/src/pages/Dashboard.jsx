@@ -249,42 +249,50 @@ export default function Dashboard() {
                 .slice(0, 30)
                 .map((p) => (
 
-                <tr
-                  key={p.id}
-                  className="border-t border-gray-200 dark:border-dark-muted hover:bg-gray-50 dark:hover:bg-dark-background transition"
-                >
-                  <td className="px-4 py-2 font-semibold">
-                    <Link
-                      to={`/exports/${p.id}?mode=draft`}
-                      className="text-primary hover:underline"
-                    >
-                      {p.name}
-                    </Link>
-                  </td>
-                  <td className="px-4 py-2 text-gray-500 dark:text-gray-400">
-                    {p.domain || "-"}
-                  </td>
-                  <td className="px-4 py-2 text-gray-500 dark:text-gray-400">
-                    {new Date(p.created_at).toLocaleDateString()}
-                  </td>
-                  <td className="px-4 py-2 flex items-center gap-3 justify-end">
-                    <Link
-                      to={`/exports/${p.id}?mode=draft`}
-                      className="flex items-center gap-1 text-primary hover:underline"
-                    >
-                      <Eye className="w-5 h-5" />
-                      View
-                    </Link>
-                    <button
-                      onClick={() => handleDelete(p.id)}
-                      className="flex items-center gap-1 text-red-600 hover:text-red-800 transition"
-                    >
-                      <Trash2 className="w-5 h-5" />
-                      Delete
-                    </button>
-                  </td>
-                </tr>
-              ))}
+                  <tr
+                    key={p.id}
+                    className="border-t border-gray-200 dark:border-dark-muted hover:bg-gray-50 dark:hover:bg-dark-background transition"
+                  >
+                    <td className="px-4 py-2 font-semibold">
+                      <Link
+                        to={`/exports/${p.id}?mode=draft`}
+                        className="text-primary hover:underline"
+                      >
+                        {p.name}
+                      </Link>
+                    </td>
+                    <td className="px-4 py-2 text-gray-500 dark:text-gray-400">
+                      {p.domain || "-"}
+                    </td>
+                    <td className="px-4 py-2 text-gray-500 dark:text-gray-400">
+                      {new Date(p.created_at).toLocaleDateString()}
+                    </td>
+                    <td className="px-4 py-2 flex items-center gap-3 justify-end">
+                      <Link
+                        to={`/exports/${p.id}?mode=draft`}
+                        className="flex items-center gap-1 text-primary hover:underline"
+                      >
+                        <Eye className="w-5 h-5" />
+                        View
+                      </Link>
+                      <Link
+                        to={`/projects/${p.id}`}
+                        className="flex items-center gap-1 text-emerald-600 hover:text-emerald-800 hover:underline transition"
+                        title="View project details and close project"
+                      >
+                        <Folder className="w-5 h-5" />
+                        Details
+                      </Link>
+                      <button
+                        onClick={() => handleDelete(p.id)}
+                        className="flex items-center gap-1 text-red-600 hover:text-red-800 transition"
+                      >
+                        <Trash2 className="w-5 h-5" />
+                        Delete
+                      </button>
+                    </td>
+                  </tr>
+                ))}
 
             </tbody>
           </table>

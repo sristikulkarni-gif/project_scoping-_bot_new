@@ -4,6 +4,70 @@ import projectApi from '../api/projectApi';
 import GanttChart from './GanttChart';
 
 /**
+ * Component to render architecture diagram with fallback support
+ */
+const ArchitectureDiagramViewer = ({ imageUrl }) => {
+  const [currentUrl, setCurrentUrl] = useState(imageUrl);
+  const [hasError, setHasError] = useState(false);
+
+  const handleError = () => {
+    // If it was a PNG and failed, try SVG fallback
+    if (currentUrl.includes('.png')) {
+      console.log('⚠️ PNG failed, trying SVG fallback...');
+      setCurrentUrl(currentUrl.replace('.png', '.svg'));
+    } else {
+      // Already tried fallback or was not PNG
+      console.error('❌ Image failed to load:', currentUrl);
+      setHasError(true);
+    }
+  };
+
+  if (hasError) {
+    return (
+      <div className="flex items-center justify-center min-h-[400px] w-full bg-gray-50 dark:bg-gray-800/50 rounded-lg border border-gray-200 dark:border-gray-700 p-8 text-center text-gray-500 dark:text-gray-400">
+        <div className="flex flex-col items-center gap-2">
+          <svg xmlns="http://www.w3.org/2000/svg" className="w-12 h-12 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+          </svg>
+          <p>Image not available</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="relative group w-full bg-gray-50 dark:bg-gray-800/50 rounded-lg border border-gray-200 dark:border-gray-700 h-[80vh] min-h-[500px] flex flex-col overflow-hidden">
+      <div className="absolute top-4 right-4 z-10 transition-opacity opacity-70 hover:opacity-100 bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm rounded-md shadow-sm">
+        <a
+          href={currentUrl}
+          target="_blank"
+          rel="noreferrer"
+          className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-gray-700 dark:text-gray-200 hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
+          title="View full size image"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+          </svg>
+          Open Full Image
+        </a>
+      </div>
+
+      <div className="flex-1 w-full overflow-auto p-8">
+        <div className="min-w-min min-h-min flex justify-center">
+          <img
+            src={currentUrl}
+            alt="Architecture Diagram"
+            className="max-w-none shadow-lg bg-white dark:bg-gray-800 rounded-md"
+            onError={handleError}
+          />
+        </div>
+      </div>
+    </div>
+  );
+};
+
+
+/**
  * Component to render scope section previews
  */
 const ScopePreviewTabs = ({ activeTab, parsedDraft }) => {
@@ -290,24 +354,7 @@ const ScopePreviewTabs = ({ activeTab, parsedDraft }) => {
         console.log('🖼️ Constructed image URL:', imageUrl);
         // console.log('🖼️ API Base URL:', apiBaseUrl);
 
-        return (
-          <div className="flex flex-col items-center justify-center p-4">
-            <img
-              src={imageUrl}
-              alt="Architecture Diagram"
-              className="max-w-full h-auto border border-gray-300 dark:border-gray-600 rounded-lg shadow-lg"
-              onLoad={() => console.log('✅ Image loaded successfully')}
-              onError={(e) => {
-                console.error('❌ Image failed to load:', imageUrl);
-                e.target.onerror = null;
-                e.target.src = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300"><rect width="400" height="300" fill="%23f3f4f6"/><text x="50%" y="50%" text-anchor="middle" fill="%236b7280" font-family="Arial" font-size="16">Image not available</text></svg>';
-              }}
-            />
-            <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">
-              {data.split('/').pop()}
-            </p>
-          </div>
-        );
+        return <ArchitectureDiagramViewer imageUrl={imageUrl} />;
       }
       // If it's a string but not an image path, just show it as text
       return <div className="text-gray-600 dark:text-gray-400">{data}</div>;

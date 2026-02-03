@@ -679,6 +679,31 @@ async def get_related_case_study(
 
     except HTTPException:
         raise
-    except Exception as e:
-        logger.error(f"Failed to find related case study for project {project_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to find related case study: {str(e)}")
+
+
+# CLOSE PROJECT (Continuous Learning)
+@router.post("/{project_id}/close", response_model=schemas.MessageResponse)
+async def close_project(
+    project_id: uuid.UUID,
+    payload: Dict[str, Any],
+    db: AsyncSession = Depends(get_async_session),
+    current_user: models.User = Depends(get_current_active_user),
+):
+    """
+    Close a project and submit 'Actuals' for continuous learning.
+    This creates a new Knowledge Base entry tagged as 'actual_data'.
+    """
+    from app.services import continuous_learning
+
+    # Validate project ownership
+    db_project = await projects.get_project(db, project_id=project_id, owner_id=current_user.id)
+    if not db_project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    try:
+        await continuous_learning.process_project_closeout(project_id, payload, db)
+        return {"msg": "Project closed successfully. Actuals have been ingested for future learning."}
+    except Exception as e:
+        logger.error(f"Failed to close project {project_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to process project closeout: {str(e)}")

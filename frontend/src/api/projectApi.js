@@ -90,6 +90,11 @@ const projectApi = {
 
   getPreviewUrl: (filePath, base = "projects") =>
     `${api.defaults.baseURL}/blobs/preview/${filePath}?base=${base}`,
+
+  closeProject: (id, actualsData) =>
+    api.post(`/projects/${id}/close`, actualsData, {
+      headers: { "Content-Type": "application/json" },
+    }),
 };
 
 export default projectApi;

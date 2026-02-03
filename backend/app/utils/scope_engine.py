@@ -1119,6 +1119,12 @@ def _build_scope_prompt(rfp_text: str, kb_chunks: List[str], project=None, quest
         "**🔴 OVERRIDE RULE:** If the user specifies a duration (e.g. '3 months'), you MUST output that EXACT duration.\n"
         "IGNORE the 'Activity Duration Guidelines' above for that specific activity.\n"
         "Do NOT round it down. Do NOT make it 'realistic'. Just obey the user.\n"
+        "\n"
+        "**🔴 CONTINUOUS LEARNING RULE (ACTUALS):**\n"
+        "If the 'Knowledge Base Context' contains text tagged as 'ACTUAL_DATA' or 'PROJECT CLOSEOUT REPORT', it is HIGH PRIORITY.\n"
+        "- Real actuals from past projects are better than templates.\n"
+        "- If an Actual Report says 'Activity X took 50 hours', and your template says 20, USE 50 (or close to it).\n"
+        "- Cite '(Based on actuals from Project ...)' in the activity notes if possible.\n"
         f"{user_context}"
         f"RFP / Project Files Content:\n{rfp_text[:8000]}... [TRUNCATED for Memory Safety]\n\n"
         f"Knowledge Base Context (for enrichment only):\n{str(kb_context)[:2000]}... [TRUNCATED]\n"
@@ -1527,8 +1533,8 @@ def _build_architecture_prompt(rfp_text: str, kb_chunks: List[str], project=None
     tech = (getattr(project, "tech_stack", "") or "Modern Web + Cloud Stack").strip()
 
     return f"""
-    You are a **senior enterprise solution architect** tasked with designing a *tailored cloud system architecture diagram*
-    strictly based on the provided RFP and contextual knowledge.
+    You are a **senior enterprise solution architect**. Your task is to design a logical system architecture for the project described below.
+    Instead of drawing the diagram, you must define the **structure components and connections** in a strict JSON format.
 
     ### PROJECT CONTEXT
     - **Project Name:** {name}
@@ -1543,95 +1549,158 @@ def _build_architecture_prompt(rfp_text: str, kb_chunks: List[str], project=None
 
     ---
 
-    ###  STEP 1 — Reasoning (Internal)
-    Analyze the provided RFP and knowledge base to:
-    1. Identify all domain-specific **entities, systems, or technologies** mentioned or implied.
-    2. Categorize each component into the most appropriate architecture layer:
-    - Frontend (UI/Apps)
-    - Backend (Services/APIs)
-    - Data (Databases, Storage, External APIs)
-    - AI/Analytics (ML, Insights, NLP, Recommendations)
-    - Security/Monitoring/DevOps (IAM, Key Vault, CI/CD, Logging)
-    3. Infer **connections and data flows** between components (e.g., API requests, pipelines, message queues).
-    4. Skip any layers not relevant to this RFP.
+    ### INSTRUCTIONS
+    1. Identify key components based on the RFP and Tech Stack.
+    2. Group them into these standard layers:
+       - **frontend**: User interfaces (Web, Mobile, Admin Panels)
+       - **backend**: Application logic, APIs, Microservices, Auth
+       - **data**: Databases, File Storage, Caching, Data Warehouses
+       - **ai**: AI Models, ML Pipelines, Analytics Engines
+       - **security**: Firewalls, Identity Providers, Monitoring, CI/CD tools
+    3. Define logical data flow connections (A -> B).
 
-    You will use this reasoning to build the architecture — but **do not include this reasoning** in your final output.
+    ### OUTPUT FORMAT (JSON ONLY)
+    Return a single valid JSON object with this schema:
+    {{
+      "frontend": [
+        {{"label": "Detailed Name", "tech": "React/Flutter/etc"}},
+        ...
+      ],
+      "backend": [
+        {{"label": "Detailed Name", "tech": "FastAPI/Node/etc"}}
+      ],
+      "data": [
+        {{"label": "Detailed Name", "tech": "Postgres/Redis/etc"}}
+      ],
+      "ai": [
+        {{"label": "Detailed Name", "tech": "OpenAI/PyTorch/etc"}}
+      ],
+      "security": [
+        {{"label": "Detailed Name", "tech": "Auth0/Prometheus/etc"}}
+      ],
+      "connections": [
+        {{"from": "Frontend Label", "to": "Backend Label", "label": "HTTP/REST"}},
+        {{"from": "Backend Label", "to": "Data Label", "label": "SQL"}}
+      ]
+    }}
 
-    ---
-
-    ###  STEP 2 — Graphviz DOT Output
-    Generate **only valid Graphviz DOT code** representing the inferred architecture.
-
-    Follow these rules strictly:
-    - Begin with: `digraph Architecture {{`
-    - End with: `}}`
-    - Use **horizontal layout** → `rankdir=LR`
-    - Include **only relevant clusters** (omit unused layers)
-    - Keep ≤ 15 nodes total
-    - Use **orthogonal edges** (`splines=ortho`)
-    - Each node label must clearly represent an actual system, service, or tool
-    - Logical flow should follow Frontend → Backend → Data → AI → Security (only if applicable)
-    -  **Ensure data layers both receive and provide information** — show arrows *into* and *out of* data/storage nodes if analytics, AI, or reporting components exist.
-
-    ---
-
-    ### VISUAL STYLE
-    - **Graph:** dpi=200, bgcolor="white", nodesep=1.3, ranksep=1.3
-    - **Clusters:** style="filled,rounded", fontname="Helvetica-Bold", fontsize=13
-    - **Node Shapes and Colors:**
-    - Frontend → `box`, pastel blue (`fillcolor="#E3F2FD"`)
-    - Backend/API → `box3d`, pastel green (`fillcolor="#E8F5E9"`)
-    - Data/Storage → `cylinder`, pastel yellow (`fillcolor="#FFFDE7"`)
-    - AI/Analytics → `ellipse`, pastel purple (`fillcolor="#F3E5F5"`)
-    - Security/Monitoring → `diamond`, gray (`fillcolor="#ECEFF1"`)
-    - **Edges:** color="#607D8B", penwidth=1.5, arrowsize=0.9
-
-    ---
-
-    ###  STEP 3 — Domain Intelligence (Auto-Enrichment)
-    If applicable, automatically enrich the architecture using these domain patterns:
-
-    - **FinTech** → Payment Gateway, Fraud Detection, KYC/AML Service, Ledger DB
-    - **HealthTech** → Patient Portal, EHR System, FHIR API, HIPAA Compliance Layer
-    - **GovTech** → Citizen Portal, Secure API Gateway, Compliance & Audit Logging
-    - **AI/ML Projects** → Model API, Embedding Store, Training Pipeline, Monitoring Service
-    - **Data Platforms** → ETL Pipeline, Data Lake, BI Dashboard
-    - **Enterprise SaaS** → Tenant Manager, Auth Service, Billing & Subscription Module
-
-    Include these elements **only if they logically fit** the RFP description.
-
-    ---
-
-    ###  STEP 4 — OUTPUT RULES (CRITICAL!)
-
-    **YOUR RESPONSE MUST START WITH:** digraph Architecture {{
-    **YOUR RESPONSE MUST END WITH:** }}
-
-    - Output *only* valid Graphviz DOT syntax
-    - **NO** markdown code fences
-    - **NO** explanatory text before or after the DOT code
-    - **NO** reasoning or commentary
-    - **NO** sentences like "Based on the analysis..." or "Here is the code..."
-    - **NO** C-style comments (//) - DOT does not support them! Use # or /* */ if needed
-    - **NO** escaped quotes (\") - Use plain quotes in attribute values
-    - **IMPORTANT:** Ensure all labels are complete and properly closed with quotes
-    - **IMPORTANT:** Do NOT end labels with colons (e.g., label="Database:" is WRONG, use label="Database")
-    - The FIRST character of your response must be "d" (from digraph)
-    - The LAST character of your response must be closing brace
-
-    **WRONG (Do NOT do this):**
-    Based on the analysis, here is the code:
-    digraph Architecture {{ ... }}
-
-    **ALSO WRONG - Incomplete labels:**
-    SQL_DB [label="SQL Database\nTransformation:
-
-    **CORRECT (Do this):**
-    digraph Architecture {{ ... }}
-    SQL_DB [label="SQL Database\nTransformation"]
-
-    Your response must be pure DOT code that can be directly passed to Graphviz without any processing.
+    **RULES**:
+    - Use EXPLICIT labels that match exactly in "connections".
+    - "label" should be short (e.g. "Core API", not "The core api server").
+    - "tech" is optional detail text.
+    - Omit empty layers if not applicable.
     """
+
+
+
+def _generate_dot_from_json(arch_data: dict) -> str:
+    """
+    Convert the structured architecture JSON into a strict, well-formatted DOT string.
+    Enforces layout, colors, and clustering.
+    """
+    
+    # --- Style Configuration ---
+    C_FRONTEND = "#E3F2FD"
+    C_BACKEND = "#E8F5E9"
+    C_DATA = "#FFFDE7"
+    C_AI = "#F3E5F5"
+    C_SECURITY = "#ECEFF1"
+    
+    dot_lines = [
+        'digraph Architecture {',
+        '    rankdir=TB;',
+        '    splines=ortho;',
+        '    nodesep=0.8;',
+        '    ranksep=1.0;',
+        # Global graph settings
+        '    graph [dpi=200, bgcolor="white", fontname="Arial"];',
+        # Global node settings
+        '    node [style="filled,rounded", shape=box, fontname="Arial", fontsize=12, penwidth=1.2];',
+        # Global edge settings
+        '    edge [color="#607D8B", penwidth=1.5, arrowsize=0.8, fontname="Arial", fontsize=10];',
+        ''
+    ]
+    
+    # Helper to clean labels for IDs
+    def make_id(label):
+        s = re.sub(r'[^a-zA-Z0-9]', '_', str(label)).strip('_')
+        if not s: return "node_unknown"
+        if s[0].isdigit(): s = "N" + s
+        return s
+
+    def escape_html(text):
+        if not text: return ""
+        return (str(text)
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace('"', "&quot;")
+            .replace("'", "&apos;"))
+
+    def add_cluster(name, label, color, items):
+        if not items: return
+        dot_lines.append(f'    subgraph cluster_{name} {{')
+        dot_lines.append(f'        label="{label}";')
+        dot_lines.append(f'        style="filled,rounded";')
+        dot_lines.append(f'        fillcolor="{color}";')
+        dot_lines.append(f'        fontsize=13;')
+        
+        for item in items:
+            lbl_raw = item.get("label", "Unknown")
+            tech_raw = item.get("tech", "")
+            
+            node_id = make_id(lbl_raw)
+            lbl = escape_html(lbl_raw)
+            tech = escape_html(tech_raw)
+            
+            # HTML-like label for rich text
+            # Note: Graphviz HTML labels must be enclosed in <...>
+            if tech:
+                full_label = f'<{lbl}<BR/><FONT POINT-SIZE="10" COLOR="#555555">{tech}</FONT>>'
+            else:
+                full_label = f'"{lbl}"'
+            
+            # Shape mapping based on layer
+            shape = "box"
+            if name == "backend": shape = "component" 
+            elif name == "data": shape = "cylinder" 
+            elif name == "ai": shape = "ellipse"
+            elif name == "security": shape = "diamond"
+            
+            # Use 'white' for node background to contrast with cluster color
+            dot_lines.append(f'        {node_id} [label={full_label}, shape={shape}, fillcolor="white"];')
+            
+        dot_lines.append('    }')
+        dot_lines.append('')
+
+    # --- Build Clusters ---
+    add_cluster("frontend", "Frontend & Channels", C_FRONTEND, arch_data.get("frontend", []))
+    add_cluster("backend", "Backend Services & API", C_BACKEND, arch_data.get("backend", []))
+    add_cluster("data", "Data persistence & Storage", C_DATA, arch_data.get("data", []))
+    add_cluster("ai", "AI Models & Analytics", C_AI, arch_data.get("ai", []))
+    add_cluster("security", "Security & DevOps", C_SECURITY, arch_data.get("security", []))
+
+    # --- Build Connections ---
+    connections = arch_data.get("connections", [])
+    seen_edges = set()
+    
+    for conn in connections:
+        src_lbl = conn.get("from", "")
+        dst_lbl = conn.get("to", "")
+        lbl = conn.get("label", "")
+        
+        src = make_id(src_lbl)
+        dst = make_id(dst_lbl)
+        
+        if src and dst and src != dst:
+            edge_key = f"{src}->{dst}"
+            if edge_key not in seen_edges:
+                label_attr = f' [label="{lbl}"]' if lbl else ''
+                dot_lines.append(f'    {src} -> {dst}{label_attr};')
+                seen_edges.add(edge_key)
+
+    dot_lines.append('}')
+    return "\n".join(dot_lines)
 
 
 def _build_eraser_architecture_prompt(rfp_text: str, kb_chunks: List[str], project=None) -> str:
@@ -1908,8 +1977,8 @@ async def _generate_fallback_architecture(
     # --- Default DOT diagram ---
     fallback_dot = """
 digraph Architecture {
-    rankdir=LR;
-    graph [dpi=200, bgcolor="white", nodesep=1.3, ranksep=1.2, splines=ortho];
+    rankdir=TB;
+    graph [dpi=200, bgcolor="white", nodesep=0.8, ranksep=1.0, splines=ortho];
     node [style="rounded,filled", fontname="Helvetica-Bold", fontsize=13, penwidth=1.2];
 
     subgraph cluster_frontend {
@@ -2006,6 +2075,7 @@ digraph Architecture {
 
 
 
+
 async def generate_architecture(
     db: AsyncSession,
     project,
@@ -2014,353 +2084,130 @@ async def generate_architecture(
     blob_base_path: str,
 ) -> tuple[models.ProjectFile | None, str]:
     """
-    Generate a visually clean, context-aware architecture diagram (PNG & SVG)
-    from RFP + KB context using Ollama + Graphviz.
-    Uses dynamic prompts that adapt layers automatically (no static template).
-    Includes retry logic, sanitization, validation, and fallback diagram.
+    Generate structured architecture diagram using JSON-to-DOT approach.
     """
 
     prompt = _build_architecture_prompt(rfp_text, kb_chunks, project)
 
-    # ---------- Step 1: Ask Ollama for Graphviz DOT code ----------
-    async def _generate_dot_from_ai(retry: int = 0) -> str:
-        """Call Ollama locally to generate DOT diagram."""
+    # ---------- Step 1: Ask Ollama for JSON structure ----------
+    logger.info(f"🏗️ Generating structural architecture JSON for project {project.id}...")
+    
+    async def _generate_json_from_ai(retry: int = 0) -> dict:
         try:
-            return await anyio.to_thread.run_sync(lambda: ollama_chat(prompt, temperature=0.7))
+            # Use format_json=True if supported by wrapper, else trust prompt
+            response_text = await anyio.to_thread.run_sync(
+                lambda: ollama_chat(prompt, temperature=0.3, format_json=True)
+            )
+            return _extract_json(response_text)
         except Exception as e:
             if retry < 2:
-                logger.warning(f"Ollama call failed (retry {retry+1}/3): {e}")
-                await anyio.sleep(2)
-                return await _generate_dot_from_ai(retry + 1)
-            logger.error(f"Ollama architecture generation failed after retries: {e}")
-            return ""
+                logger.warning(f"AI generation failed (retry {retry+1}): {e}")
+                return await _generate_json_from_ai(retry + 1)
+            return {}
 
+    arch_json = await _generate_json_from_ai()
 
-    dot_code = await _generate_dot_from_ai()
-    if not dot_code:
-        logger.warning(" No DOT code returned by AI — generating fallback diagram")
+    if not arch_json or not any(key in arch_json for key in ["frontend", "backend", "data"]):
+        logger.warning("⚠️ Invalid or empty architecture JSON returned - using fallback")
         return await _generate_fallback_architecture(db, project, blob_base_path)
 
-    # ---------- Step 2: Clean & sanitize DOT ----------
-    # Remove markdown code fences
-    dot_code = re.sub(r"```[a-zA-Z]*", "", dot_code).replace("```", "").strip()
-    dot_code = dot_code.strip("`").strip()
-
-    # Extract only the DOT code if LLM added commentary
-    # Look for "digraph" and extract from there to the last closing brace
-        # Extract only the DOT code if LLM added commentary
-    # Look for "digraph" and extract from there to the last closing brace
-    match = re.search(r'(digraph\s+\w+\s*\{.*\})\s*$', dot_code, re.DOTALL | re.IGNORECASE)
-    if match:
-        dot_code = match.group(1).strip()
-    else:
-        # Try to find any digraph block
-        match = re.search(r'digraph\s+\w+\s*\{', dot_code, re.IGNORECASE)
-        if match:
-            # Extract from digraph to the end
-            start_idx = match.start()
-            dot_code = dot_code[start_idx:].strip()
-
-    # AGGRESSIVE duplicate removal - AI sometimes generates ENTIRE graph twice
-    # Find the first complete digraph { ... } block and remove everything after
-    brace_count = 0
-    first_graph_end = -1
-    in_graph = False
-    
-    for i, char in enumerate(dot_code):
-        if char == '{':
-            brace_count += 1
-            in_graph = True
-        elif char == '}':
-            brace_count -= 1
-            if in_graph and brace_count == 0:
-                # Found the end of first complete graph
-                first_graph_end = i + 1
-                break
-    
-    if first_graph_end > 0:
-        # Keep only the first complete graph, remove any duplicates after
-        dot_code = dot_code[:first_graph_end].strip()
-    
-    # Remove duplicate digraph declarations at the beginning
-    # If we have multiple "digraph Architecture {" lines, keep only the first one
-    lines = dot_code.split('\n')
-    digraph_count = 0
-    cleaned_lines = []
-    for line in lines:
-        # More lenient regex - matches "digraph <name> {" with any trailing content
-        if re.match(r'^\s*digraph\s+\w+\s*\{', line, re.IGNORECASE):
-            digraph_count += 1
-            if digraph_count == 1:
-                cleaned_lines.append(line)
-            # else: skip duplicate digraph lines (don't add to cleaned_lines)
-        else:
-            cleaned_lines.append(line)
-    dot_code = '\n'.join(cleaned_lines)
-
-    
-    # Additional check: Remove any digraph lines that appear after opening brace
-    # Sometimes AI generates: digraph { \n digraph { which the above misses
-    dot_code = re.sub(
-        r'(digraph\s+\w+\s*\{[^\}]*?)\s*digraph\s+\w+\s*\{',
-        r'\1',
-        dot_code,
-        flags=re.IGNORECASE | re.DOTALL
-    )
-
-
-    dot_code = re.sub(r"(?i)^graph\s", "digraph ", dot_code)
-
-    # Remove C-style comments (// ...) - Graphviz DOT doesn't support them
-    dot_code = re.sub(r'//[^\n]*', '', dot_code)
-
-    # Fix escaped quotes - DOT doesn't need escaped quotes in attribute values
-    dot_code = dot_code.replace('\\"', '"')
-
-    # Remove extra whitespace and blank lines
-    dot_code = '\n'.join(line for line in dot_code.split('\n') if line.strip())
-
-    # Fix brace mismatch
-    open_braces = dot_code.count("{")
-    close_braces = dot_code.count("}")
-    if open_braces > close_braces:
-        dot_code += "}" * (open_braces - close_braces)
-    elif close_braces > open_braces:
-        dot_code = "digraph Architecture {\n" + dot_code
-
-    if not dot_code.lower().startswith("digraph"):
-        dot_code = f"digraph Architecture {{\n{dot_code}\n}}"
-
-    # Remove control characters
-    dot_code = re.sub(r"[^\x09\x0A\x0D\x20-\x7E]", "", dot_code)
-
-    # Fix label syntax - ensure all labels are properly quoted and escaped
-    # Replace any labels that might have unescaped colons or special characters
-    def fix_label(match):
-        """Fix label syntax by properly escaping special characters."""
-        label_content = match.group(1)
-        # Remove any problematic colons at the end of labels (incomplete labels)
-        label_content = re.sub(r':\s*$', '', label_content)
-        # Escape quotes inside labels
-        label_content = label_content.replace('"', '\\"')
-        return f'label="{label_content}"'
-
-    # Fix incomplete or malformed labels
-    dot_code = re.sub(r'label="([^"]*)"?\s*(?=[;\]\}]|\n|$)', fix_label, dot_code)
-
-    # Ensure node names don't have special characters that need escaping
-    # Replace problematic node names with safe versions
-    dot_code = re.sub(r'([A-Za-z0-9_]+)\s*\[label="([^"]+):"', r'\1 [label="\2"', dot_code)
-
-        # Fix missing semicolons between attributes in node definitions
-    # Pattern 1: attribute="value" followed by another attribute= (missing semicolon)
-    dot_code = re.sub(
-        r'([a-zA-Z_]+\s*=\s*"[^"]*")\s+([a-zA-Z_]+\s*=)',
-        r'\1; \2',
-        dot_code
-    )
-    
-    # Pattern 2: attribute=unquoted_value followed by another attribute=
-    dot_code = re.sub(
-        r'([a-zA-Z_]+\s*=\s*[a-zA-Z0-9_]+)\s+([a-zA-Z_]+\s*=)',
-        r'\1; \2',
-        dot_code
-    )
-    
-    # Fix malformed attributes with spaces around = (e.g., "fill = value" -> "fillcolor=value")
-    dot_code = re.sub(
-        r'fill\s*=\s*',
-        r'fillcolor=',
-        dot_code
-    )
-
-    # Fix incomplete or malformed hex colors in attributes
-    # Pattern: color attributes with incomplete hex values (less than 6 chars)
-    # Replace with a safe default color
-    dot_code = re.sub(
-        r'((?:fill)?color|bgcolor)\s*=\s*"#?([A-Fa-f0-9]{1,5})(?:"|;|\s|$)',
-        r'\1="#CCCCCC";',
-        dot_code
-    )
-
-    # Fix cluster declarations - ensure they use proper subgraph syntax
-    # Pattern: cluster<Name> { should be subgraph cluster<Name> {
-    dot_code = re.sub(
-        r'^\s*(cluster[A-Za-z0-9_]+)\s*\{',
-        r'subgraph \1 {',
-        dot_code,
-        flags=re.MULTILINE
-    )
-
-    # Fix hex colors missing # prefix
-    # Pattern: color-related attributes with 6-character hex values without #
-    # Matches: fillcolor="F3E5F5", color="ECEFF1", bgcolor="E8F5E9"
-    # Converts to: fillcolor="#F3E5F5", color="#ECEFF1", bgcolor="#E8F5E9"
-    dot_code = re.sub(
-        r'((?:fill)?color|bgcolor)\s*=\s*"([A-Fa-f0-9]{6})"',
-        r'\1="#\2"',
-        dot_code
-    )
- # Fix node names with spaces or special characters
-    # Replace spaces and hyphens in node names with underscores
-    def fix_node_name(match):
-        """Convert invalid node names to valid identifiers."""
-        node_name = match.group(1)
-        # Replace spaces, hyphens, dots with underscores
-        safe_name = re.sub(r'[\s\-\.]', '_', node_name)
-        # Remove any other special characters except alphanumeric and underscore
-        safe_name = re.sub(r'[^a-zA-Z0-9_]', '', safe_name)
-        # Ensure it doesn't start with a number
-        if safe_name and safe_name[0].isdigit():
-            safe_name = 'N_' + safe_name
-        return safe_name if safe_name else 'Node'
-
-    # Fix node identifiers before attributes: "My Node-1" [label=...] → My_Node_1 [label=...]
-    dot_code = re.sub(
-        r'^\s*([A-Za-z0-9][\w\s\-\.]*?)\s*\[',
-        lambda m: '    ' + fix_node_name(m) + ' [',
-        dot_code,
-        flags=re.MULTILINE
-    )
-
-    # Fix attributes without quotes (e.g., shape=box should work, but label values need quotes)
-    # Ensure label values are always quoted
-    dot_code = re.sub(
-        r'label\s*=\s*([^"\s;][^;,\]]*?)(\s*[;,\]])',
-        r'label="\1"\2',
-        dot_code
-    )
-
-    # Fix missing semicolons at end of lines with closing brackets
-    # Pattern: ] without semicolon before newline
-    dot_code = re.sub(
-        r'\]\s*\n',
-        r'];\n',
-        dot_code
-    )
-
-    # Fix double semicolons (from over-sanitization)
-    dot_code = re.sub(r';;+', ';', dot_code)
-
-    # Remove semicolons inside subgraph/digraph blocks (only at attribute/node level)
-    # Pattern: }; at end of subgraph should just be }
-    dot_code = re.sub(r'\}\s*;', r'}', dot_code)
-
-    # ---------- Step 3: Do NOT override GPT's style ----------
-    # Keep GPT's own clusters, nodes, and colors — just ensure it's syntactically valid
-    # (Old static preamble removed intentionally)
-
-    # ---------- Step 3.5: Final validation ----------
-    # Ensure we have at least one valid digraph structure
-    if not re.search(r'digraph\s+\w+\s*\{.*\}', dot_code, re.DOTALL):
-        logger.error(f" No valid digraph structure found in DOT code")
-        return await _generate_fallback_architecture(db, project, blob_base_path)
-
-    # Check for basic balance of braces
-    open_braces = dot_code.count('{')
-    close_braces = dot_code.count('}')
-    if abs(open_braces - close_braces) > 1:  # Allow 1 off for slight imbalance that we can fix
-        logger.warning(f" Brace imbalance detected: {open_braces} open, {close_braces} close")
-        if open_braces > close_braces:
-            dot_code += '}' * (open_braces - close_braces)
-        elif close_braces > open_braces:
-            dot_code = 'digraph Architecture {\n' + ('  ' * (close_braces - open_braces - 1)) + dot_code
-
-
-    # ---------- Step 3: Do NOT override GPT's style ----------
-    # Keep GPT's own clusters, nodes, and colors — just ensure it's syntactically valid
-    # (Old static preamble removed intentionally)
-
-    # ---------- Step 4: Render DOT → PNG & SVG ----------
-        # ---------- Step 4: Render DOT → PNG & SVG ----------
+    # ---------- Step 2: Convert JSON to Deterministic DOT ----------
     try:
-        tmp_base = tempfile.NamedTemporaryFile(delete=False, suffix=".dot").name
+        dot_code = _generate_dot_from_json(arch_json)
+        logger.info(f"✅ Generated deterministic DOT code ({len(dot_code)} chars)")
+    except Exception as e:
+        logger.error(f"❌ Failed to convert JSON to DOT: {e}")
+        return await _generate_fallback_architecture(db, project, blob_base_path)
 
-        # Write DOT code to temp file for debugging if rendering fails
-        with open(tmp_base, 'w') as f:
+    # ---------- Step 3: Render DOT → PNG & SVG ----------
+    import tempfile
+    tmp_base = tempfile.NamedTemporaryFile(delete=False, suffix=".dot").name
+    try:
+        # Use existing logic but strictly with our clean DOT
+        graph = graphviz.Source(dot_code, engine="dot")
+        
+        # Ensure graphviz is installed
+        try:
+            import shutil
+            if not shutil.which("dot"):
+                 logger.error("❌ Graphviz 'dot' executable not found in PATH")
+                 return None, ""
+        except:
+             pass
+
+        # Write to temp file first for debugging if needed
+        with open(tmp_base, "w") as f:
             f.write(dot_code)
 
-        graph = graphviz.Source(dot_code, engine="dot")
-
-        # Render both PNG and SVG for better clarity
-        graph.render(tmp_base, format="png", cleanup=False)  # Keep .dot file for debugging
-        graph.render(tmp_base, format="svg", cleanup=False)
-
-        png_path = tmp_base + ".png"
-        svg_path = tmp_base + ".svg"
-
-        # Cleanup the .dot file after successful render
-        try:
-            os.remove(tmp_base)
-        except:
-            pass
+        # Render
+        output_png = graph.render(tmp_base, format="png", cleanup=False)
+        output_svg = graph.render(tmp_base, format="svg", cleanup=False)
+        
+        # Adjust paths (render adds extension automatically)
+        png_path = output_png 
+        svg_path = output_svg
+        
+        # Verify files exist
+        if not os.path.exists(png_path):
+             png_path = tmp_base + ".png"
+             svg_path = tmp_base + ".svg"
 
     except Exception as e:
-        logger.error(f" Graphviz rendering failed: {e}")
-        logger.error(f"--- Full DOT Code ---\n{dot_code}\n--- End DOT Code ---")
-        # Try to keep the temp file for debugging
-        try:
-            logger.error(f" Failed DOT file saved at: {tmp_base}")
-        except:
-            pass
-        return await _generate_fallback_architecture(db, project, blob_base_path)
+        logger.error(f"❌ Graphviz rendering failed: {e}")
+        return None, ""
 
-    # ---------- Step 5: Upload PNG to Azure Blob ----------
-    blob_name_png = f"{blob_base_path}/architecture_{project.id}.png"
-    blob_name_svg = f"{blob_base_path}/architecture_{project.id}.svg"
+    # ---------- Step 4: Upload to Azure Blob ----------
+    # Note: blob_base_path is "projects/{project_id}", we need just "{project_id}/filename"
+    # because the download endpoint will add "projects/" via the base parameter
+    project_relative_path = blob_base_path.replace("projects/", "")
+    blob_name_png = f"{project_relative_path}/architecture_{project.id}.png"
+    blob_name_svg = f"{project_relative_path}/architecture_{project.id}.svg"
 
     try:
         with open(png_path, "rb") as fh:
-            await azure_blob.upload_bytes(fh.read(), blob_name_png)
-
+            await azure_blob.upload_bytes(fh.read(), blob_name_png, base="projects")
         with open(svg_path, "rb") as fh:
-            await azure_blob.upload_bytes(fh.read(), blob_name_svg)
+            await azure_blob.upload_bytes(fh.read(), blob_name_svg, base="projects")
+            
+        logger.info(f"✅ Uploaded architecture diagrams: {blob_name_png}")
+    except Exception as e:
+        logger.error(f"❌ Failed to upload diagrams: {e}")
+        return None, ""
     finally:
-        for path in [png_path, svg_path, tmp_base]:
+        # Cleanup temp files
+        for path in [png_path, svg_path, tmp_base, tmp_base + ".png", tmp_base + ".svg"]:
             try:
-                os.remove(path)
-            except FileNotFoundError:
-                pass
+                if os.path.exists(path): os.remove(path)
+            except: pass
 
-    # ---------- Step 6: Replace old architecture file ----------
+    # ---------- Step 5: Save DB Records ----------
     result = await db.execute(
         select(models.ProjectFile).filter(
             models.ProjectFile.project_id == project.id,
-            models.ProjectFile.file_name == "architecture.png",
+            models.ProjectFile.file_name.in_(["architecture.png", "architecture.svg"])
         )
     )
-    old_file = result.scalars().first()
-    if old_file:
-        try:
-            await azure_blob.delete_blob(old_file.file_path)
-            await db.delete(old_file)
-            await db.commit()
-        except Exception as e:
-            logger.warning(f" Failed to delete old architecture.png: {e}")
-
-    # ---------- Step 7: Save new ProjectFile records (PNG + SVG) ----------
+    existing_files = result.scalars().all()
+    for f in existing_files:
+        await db.delete(f)
+    
     db_file_png = models.ProjectFile(
         project_id=project.id,
         file_name="architecture.png",
-        file_path=blob_name_png,
+        file_path=blob_name_png
     )
     db_file_svg = models.ProjectFile(
         project_id=project.id,
         file_name="architecture.svg",
-        file_path=blob_name_svg,
+        file_path=blob_name_svg
     )
 
     db.add_all([db_file_png, db_file_svg])
     await db.commit()
     await db.refresh(db_file_png)
-    await db.refresh(db_file_svg)
-
-    logger.info(
-        f" Architecture diagrams stored successfully for project {project.id}: "
-        f"{blob_name_png}, {blob_name_svg}"
-    )
 
     return db_file_png, blob_name_png
+
 
 
 # --- Cleaner ---
@@ -3336,7 +3183,36 @@ async def finalize_scope(
         await db.commit()
         await db.refresh(project)
 
-    # ---- Step 3: Save finalized_scope.json ----
+    # ---- Step 3: Generate Architecture Diagram (Deterministic) ----
+    logger.info("📐 Triggering architecture diagram generation...")
+    try:
+        # Fetch RFP content from project files
+        input_files = [
+            {"file_path": f.file_path, "file_name": f.file_name}
+            for f in project.files
+            if f.file_name not in ["scope.json", "finalized_scope.json", "questions.json", "architecture.png", "architecture.svg"]
+            and not f.file_name.startswith("architecture_")
+        ]
+        
+        if input_files:
+            rfp_text = await _extract_text_from_files(input_files)
+            if rfp_text:
+                # Retrieve context
+                kb_chunks = _rag_retrieve(rfp_text[:1000])
+                blob_base_path = f"{PROJECTS_BASE}/{project_id}"
+                
+                # Retrieve and inject path
+                arch_result = await generate_architecture(db, project, rfp_text, kb_chunks, blob_base_path)
+                if arch_result and arch_result[1]:
+                    # arch_result is (db_file, blob_path_string)
+                    finalized["architecture_diagram"] = arch_result[1]
+                    logger.info(f"✅ Injected architecture path into scope: {arch_result[1]}")
+
+    except Exception as e:
+        logger.error(f"❌ Failed to generate architecture during finalization: {e}")
+        # non-blocking error for finalization
+
+    # ---- Step 4: Save finalized_scope.json ----
     result = await db.execute(
         select(models.ProjectFile).filter(
             models.ProjectFile.project_id == project_id,
@@ -3353,6 +3229,8 @@ async def finalize_scope(
         )
 
     blob_name = f"{PROJECTS_BASE}/{project_id}/finalized_scope.json"
+    
+    # Ensure architecture_diagram is preserved in saved JSON
     await azure_blob.upload_bytes(
         json.dumps(finalized, ensure_ascii=False, indent=2).encode("utf-8"),
         blob_name,

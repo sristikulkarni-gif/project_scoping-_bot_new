@@ -40,6 +40,7 @@ pytesseract==0.3.13
 graphviz==0.21
 pytz==2025.2
 PyPDF2
+svglib==1.5.1
 
 # --- Utilities ---
 requests==2.32.5

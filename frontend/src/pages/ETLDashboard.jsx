@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { useETL } from "../contexts/ETLContext";
+import * as presentonApi from "../api/presentonApi";
+import projectApi from "../api/projectApi";
 import {
   RefreshCcw,
   CheckCircle,
@@ -11,6 +13,8 @@ import {
   TrendingUp,
   Play,
   BookOpen,
+  Presentation,
+  ExternalLink,
 } from "lucide-react";
 
 export default function ETLDashboard() {
@@ -43,6 +47,14 @@ export default function ETLDashboard() {
   const [adminComment, setAdminComment] = useState("");
   const [selectedPending, setSelectedPending] = useState(null);
 
+  // Presenton state
+  const [presentonStatus, setPresentonStatus] = useState("checking");
+  const [showProjectSelector, setShowProjectSelector] = useState(false);
+  const [projects, setProjects] = useState([]);
+  const [loadingProjects, setLoadingProjects] = useState(false);
+  const [generatingPresenton, setGeneratingPresenton] = useState(false);
+  const [lastGeneratedPresentation, setLastGeneratedPresentation] = useState(null);
+
   useEffect(() => {
     // Initial load
     loadStats();
@@ -55,6 +67,9 @@ export default function ETLDashboard() {
     // Check if scan was running when page loaded
     initializeScanState();
 
+    // Check Presenton health
+    checkPresentonHealth();
+
     // Cleanup on unmount
     return () => {
       if (window.etlPollingInterval) {
@@ -62,6 +77,18 @@ export default function ETLDashboard() {
       }
     };
   }, [loadStats, loadPendingUpdates, loadProcessingJobs, loadKBDocuments, loadPendingCaseStudies]);
+
+  // Check Presenton service health
+  const checkPresentonHealth = async () => {
+    try {
+      const response = await fetch('/api/presenton/health');
+      const data = await response.json();
+      setPresentonStatus(data.status);
+    } catch (error) {
+      console.error('Failed to check Presenton health:', error);
+      setPresentonStatus('unavailable');
+    }
+  };
 
   // Initialize scan state on mount (check if scan is running)
   const initializeScanState = async () => {
@@ -254,6 +281,50 @@ export default function ETLDashboard() {
     });
   };
 
+  // Load projects for Presenton modal
+  const loadProjectsForPresenton = async () => {
+    setLoadingProjects(true);
+    try {
+      const response = await projectApi.getProjects();
+      // Filter projects that have finalized scope by checking for finalized_scope.json file
+      const projectsWithScope = response.data.filter(p => {
+        // Check if project has a finalized_scope.json file
+        return p.files && p.files.some(f => f.file_name === 'finalized_scope.json');
+      });
+      setProjects(projectsWithScope);
+    } catch (error) {
+      console.error('Failed to load projects:', error);
+      alert('Failed to load projects');
+    } finally {
+      setLoadingProjects(false);
+    }
+  };
+
+  // Handle Presenton generation
+  const handleGenerateWithPresenton = async (projectId) => {
+    setGeneratingPresenton(true);
+    setLastGeneratedPresentation(null);
+    try {
+      const result = await presentonApi.generateWithPresenton(projectId);
+      setLastGeneratedPresentation(result);
+      // alert(`✅ Presentation generated successfully!\n\nClick OK to open in Presenton editor.`);
+      // Open Presenton in new tab (might be blocked, so we show the link in UI too)
+      window.open(result.edit_url, '_blank');
+      setShowProjectSelector(false);
+    } catch (error) {
+      console.error('Presenton generation failed:', error);
+      alert(`❌ Failed to generate presentation:\n${error.response?.data?.detail || error.message}`);
+    } finally {
+      setGeneratingPresenton(false);
+    }
+  };
+
+  // Open project selector modal
+  const openProjectSelector = () => {
+    setShowProjectSelector(true);
+    loadProjectsForPresenton();
+  };
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -309,6 +380,135 @@ export default function ETLDashboard() {
           </div>
         </div>
       )}
+
+      {/* Presenton AI Presentation Studio Section */}
+      <div className="bg-gradient-to-br from-purple-50 to-indigo-50 dark:from-purple-900/20 dark:to-indigo-900/20 rounded-2xl p-6 border border-purple-200 dark:border-purple-800 shadow-sm">
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-3">
+            <div className="p-3 rounded-xl bg-gradient-to-br from-purple-600 to-indigo-600">
+              <Presentation className="w-6 h-6 text-white" />
+            </div>
+            <div>
+              <h2 className="text-2xl font-bold text-gray-900 dark:text-white">
+                Presenton - AI Presentation Studio
+              </h2>
+              <p className="text-sm text-gray-600 dark:text-gray-300">
+                Advanced AI presentation generator with templates and editing
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className={`w-3 h-3 rounded-full ${presentonStatus === 'available' ? 'bg-green-500 animate-pulse' : 'bg-red-500'
+              }`} />
+            <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
+              {presentonStatus === 'available' ? 'Running' : presentonStatus === 'checking' ? 'Checking...' : 'Offline'}
+            </span>
+          </div>
+        </div>
+
+        <p className="text-gray-700 dark:text-gray-300 mb-6">
+          Create professional presentations with AI-powered content generation, custom templates,
+          and a live editor. Generate presentations from your project scope data or start from scratch.
+        </p>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+          {/* Open Presenton Studio */}
+          <a
+            href="http://localhost:5000"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-4 p-4 bg-white dark:bg-gray-800 rounded-xl border-2 border-purple-300 dark:border-purple-700 hover:border-purple-500 dark:hover:border-purple-500 hover:shadow-lg transition-all duration-200 group"
+          >
+            <div className="p-3 rounded-lg bg-purple-100 dark:bg-purple-900/30 group-hover:bg-purple-200 dark:group-hover:bg-purple-900/50 transition-colors">
+              <ExternalLink className="w-6 h-6 text-purple-600 dark:text-purple-400" />
+            </div>
+            <div className="flex-1">
+              <h3 className="font-semibold text-gray-900 dark:text-white mb-1">
+                Open Presenton Studio
+              </h3>
+              <p className="text-sm text-gray-600 dark:text-gray-400">
+                Create presentations with templates & editor
+              </p>
+            </div>
+          </a>
+
+          {/* Generate from Project Scope */}
+          <button
+            onClick={openProjectSelector}
+            disabled={presentonStatus !== 'available'}
+            className="flex items-center gap-4 p-4 bg-white dark:bg-gray-800 rounded-xl border-2 border-indigo-300 dark:border-indigo-700 hover:border-indigo-500 dark:hover:border-indigo-500 hover:shadow-lg transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:border-indigo-300 dark:disabled:hover:border-indigo-700 group"
+          >
+            <div className="p-3 rounded-lg bg-indigo-100 dark:bg-indigo-900/30 group-hover:bg-indigo-200 dark:group-hover:bg-indigo-900/50 transition-colors">
+              <FileText className="w-6 h-6 text-indigo-600 dark:text-indigo-400" />
+            </div>
+            <div className="flex-1 text-left">
+              <h3 className="font-semibold text-gray-900 dark:text-white mb-1">
+                Generate from Project Scope
+              </h3>
+              <p className="text-sm text-gray-600 dark:text-gray-400">
+                Use your finalized scope data
+              </p>
+            </div>
+          </button>
+        </div>
+
+        {/* Features Grid */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300 bg-white/50 dark:bg-gray-800/50 rounded-lg px-3 py-2">
+            <span className="text-lg">🎨</span>
+            <span className="font-medium">Custom Templates</span>
+          </div>
+          <div className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300 bg-white/50 dark:bg-gray-800/50 rounded-lg px-3 py-2">
+            <span className="text-lg">✏️</span>
+            <span className="font-medium">Live Editor</span>
+          </div>
+          <div className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300 bg-white/50 dark:bg-gray-800/50 rounded-lg px-3 py-2">
+            <span className="text-lg">📊</span>
+            <span className="font-medium">Charts & Icons</span>
+          </div>
+          <div className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300 bg-white/50 dark:bg-gray-800/50 rounded-lg px-3 py-2">
+            <span className="text-lg">💾</span>
+            <span className="font-medium">PPTX & PDF Export</span>
+          </div>
+        </div>
+
+        {/* Success Alert for Generation */}
+        {lastGeneratedPresentation && (
+          <div className="mb-6 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-xl p-4 flex items-center justify-between animate-fade-in">
+            <div className="flex items-center gap-3">
+              <CheckCircle className="w-6 h-6 text-green-600 dark:text-green-400" />
+              <div>
+                <h3 className="font-bold text-green-900 dark:text-green-100">Presentation Generated Successfully!</h3>
+                <p className="text-sm text-green-700 dark:text-green-300">
+                  Your presentation is ready. If it didn't open automatically, click the button to view it.
+                </p>
+              </div>
+            </div>
+            <a
+              href={lastGeneratedPresentation.edit_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors shadow-md"
+            >
+              <Presentation className="w-4 h-4" />
+              Open Presentation
+            </a>
+          </div>
+        )}
+
+        {/* Offline Warning */}
+        {presentonStatus === 'unavailable' && (
+          <div className="mt-4 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg p-3 flex items-start gap-2">
+            <AlertCircle className="w-5 h-5 text-yellow-600 dark:text-yellow-400 flex-shrink-0 mt-0.5" />
+            <div className="text-sm">
+              <p className="font-semibold text-yellow-900 dark:text-yellow-100">Presenton is offline</p>
+              <p className="text-yellow-700 dark:text-yellow-300">
+                Start Presenton with: <code className="bg-yellow-100 dark:bg-yellow-900/50 px-1 rounded">docker-compose up presenton</code>
+              </p>
+            </div>
+          </div>
+        )}
+      </div>
 
       {/* Tabs */}
       <div className="border-b border-gray-200 dark:border-gray-700">
@@ -708,6 +908,81 @@ export default function ETLDashboard() {
           </div>
         )}
       </div>
+
+      {/* Project Selector Modal for Presenton */}
+      {showProjectSelector && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setShowProjectSelector(false)}>
+          <div className="bg-white dark:bg-dark-surface rounded-2xl p-6 max-w-2xl w-full mx-4 max-h-[80vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-2xl font-bold text-gray-900 dark:text-white">
+                Select Project for Presenton
+              </h2>
+              <button
+                onClick={() => setShowProjectSelector(false)}
+                className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+              >
+                <XCircle className="w-6 h-6" />
+              </button>
+            </div>
+
+            <p className="text-gray-600 dark:text-gray-400 mb-6">
+              Choose a project with finalized scope to generate a presentation
+            </p>
+
+            {loadingProjects ? (
+              <div className="text-center py-12">
+                <RefreshCcw className="w-12 h-12 mx-auto mb-4 animate-spin text-primary" />
+                <p className="text-gray-600 dark:text-gray-400">Loading projects...</p>
+              </div>
+            ) : projects.length === 0 ? (
+              <div className="text-center py-12">
+                <AlertCircle className="w-16 h-16 mx-auto mb-4 text-gray-400" />
+                <p className="text-lg font-medium text-gray-900 dark:text-white mb-2">
+                  No Projects Available
+                </p>
+                <p className="text-sm text-gray-600 dark:text-gray-400">
+                  You need to finalize at least one project scope first
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {projects.map((project) => (
+                  <button
+                    key={project.id}
+                    onClick={() => handleGenerateWithPresenton(project.id)}
+                    disabled={generatingPresenton}
+                    className="w-full text-left p-4 border-2 border-gray-200 dark:border-gray-700 rounded-xl hover:border-primary dark:hover:border-dark-primary hover:shadow-md transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <div className="flex items-start justify-between">
+                      <div className="flex-1">
+                        <h3 className="font-semibold text-gray-900 dark:text-white mb-1">
+                          {project.name}
+                        </h3>
+                        <p className="text-sm text-gray-600 dark:text-gray-400 mb-2">
+                          {project.domain || 'No domain specified'}
+                        </p>
+                      </div>
+                      <Presentation className="w-6 h-6 text-primary dark:text-dark-primary flex-shrink-0 ml-4" />
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {generatingPresenton && (
+              <div className="mt-4 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4 flex items-center gap-3">
+                <RefreshCcw className="w-5 h-5 text-blue-600 dark:text-blue-400 animate-spin flex-shrink-0" />
+                <div>
+                  <p className="font-semibold text-blue-900 dark:text-blue-100">Generating presentation...</p>
+                  <p className="text-sm text-blue-700 dark:text-blue-300">
+                    This may take a moment. Please wait.
+                  </p>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

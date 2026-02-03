@@ -79,6 +79,45 @@ services:
     networks:
       - scopebot-network
 
+  # Presenton AI Presentation Generator
+  presenton:
+    image: ghcr.io/presenton/presenton:latest
+    container_name: scopebot-presenton
+    restart: unless-stopped
+    ports:
+      - "5000:80"
+    volumes:
+      - presenton_data:/app_data
+      - ./docker/presenton/patches/llm_client.py:/app/servers/fastapi/services/llm_client.py
+      - ./docker/presenton/patches/image_generation_service.py:/app/servers/fastapi/services/image_generation_service.py
+      - ./docker/presenton/patches/presentation_endpoint.py:/app/servers/fastapi/api/v1/ppt/endpoints/presentation.py
+      - ./docker/presenton/patches/start.js:/app/start.js
+      - ./docker/presenton/patches/next.config.mjs:/app/servers/nextjs/next.config.mjs
+      - ./docker/presenton/patches/nginx.conf:/etc/nginx/nginx.conf
+    env_file:
+      - .env
+    environment:
+      # CRITICAL: Use LLM=openai (not DEFAULT_LLM_PROVIDER) - this is what Presenton actually reads
+      - LLM=openai
+      # Configure Azure OpenAI (to avoid Google Gemini quota limits)
+      - OPENAI_API_KEY=${AZURE_OPENAI_KEY}
+      - OPENAI_API_BASE=${AZURE_OPENAI_ENDPOINT}
+      - OPENAI_API_VERSION=${AZURE_OPENAI_VERSION}
+      - OPENAI_API_TYPE=azure
+      - AZURE_OPENAI_DEPLOYMENT=${AZURE_OPENAI_DEPLOYMENT_NAME}
+      # Set default model
+      - DEFAULT_LLM_MODEL=${AZURE_OPENAI_DEPLOYMENT_NAME}
+      # Disable Google Gemini completely
+      - GOOGLE_API_KEY=
+      - GEMINI_API_KEY=
+      - ENABLE_GEMINI=false
+      - ENABLE_GEMINI=false
+      - USE_AZURE_OPENAI=true
+      - IMAGE_PROVIDER=dall-e-3
+      - CAN_CHANGE_KEYS=false
+    networks:
+      - scopebot-network
+
 networks:
   scopebot-network:
     driver: bridge
@@ -86,3 +125,4 @@ networks:
 volumes:
   pgdata:
   qdrant_storage:
+  presenton_data:

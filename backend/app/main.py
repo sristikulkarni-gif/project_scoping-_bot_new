@@ -6,7 +6,7 @@ import asyncio
 import logging
 from app.config.database import async_engine, Base, get_async_session
 from app.auth import router as auth_router
-from app.routers import projects, exports, blob, ratecards, project_prompts, etl, case_studies
+from app.routers import projects, exports, blob, ratecards, project_prompts, etl, case_studies, presenton
 from app.utils import azure_blob
 from app.services.etl_pipeline import get_etl_pipeline
 
@@ -111,6 +111,7 @@ app.include_router(ratecards.router)
 app.include_router(project_prompts.router)
 app.include_router(etl.router)
 app.include_router(case_studies.router)
+app.include_router(presenton.router)
 
 # ---------- Startup Event ----------
 @app.on_event("startup")

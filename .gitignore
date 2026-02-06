@@ -120,3 +120,7 @@ dist-ssr
 *.sw?
 .commands.txt
 commands.txt
+
+# Sensitive / Temporary / User Specific
+token.json
+debug_presenton.py

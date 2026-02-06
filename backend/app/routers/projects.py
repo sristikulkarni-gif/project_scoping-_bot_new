@@ -168,6 +168,7 @@ async def delete_all_projects(
     logger.info(f" Deleted {count} projects for user {current_user.id}.")
     return {"msg": f"Deleted {count} projects successfully (DB + Blob auto-cleaned)."}
 
+
 # Generate Scope
 @router.get("/{project_id}/generate_scope", response_model=schemas.GeneratedScopeResponse)
 async def generate_project_scope_route(
@@ -203,6 +204,7 @@ async def generate_project_scope_route(
         resourcing_plan=scope.get("resourcing_plan", []),
         architecture_diagram=scope.get("architecture_diagram")
     )
+
 
 
 

@@ -2425,6 +2425,128 @@ async def clean_scope(db: AsyncSession, data: Dict[str, Any], project=None) -> D
     return data
 
 
+def _transform_agent_output_to_scope_format(agent_scope: dict, project) -> dict:
+    """
+    Transform agent output format to the legacy scope format expected by clean_scope().
+    
+    Agent returns:
+    {
+        "project_overview": {...},
+        "timeline": {...},
+        "team_composition": [...],
+        "cost_summary": {...},
+        "phases": [...],
+        "activities": [...]
+    }
+    
+    We need to convert to:
+    {
+        "overview": {...},
+        "activities": [...]
+    }
+    """
+    from datetime import datetime, timedelta
+    
+    # Extract data from agent output
+    project_overview = agent_scope.get("project_overview", {})
+    timeline = agent_scope.get("timeline", {})
+    activities_list = agent_scope.get("activities", [])
+    phases = agent_scope.get("phases", [])
+    
+    # Build overview
+    overview = {
+        "Project Name": project_overview.get("name", getattr(project, "name", "Untitled")),
+        "Domain": project_overview.get("domain", getattr(project, "domain", "")),
+        "Tech Stack": getattr(project, "tech_stack", ""),
+        "Use Cases": getattr(project, "use_cases", ""),
+        "Complexity": getattr(project, "complexity", ""),
+        "Compliance": getattr(project, "compliance", ""),
+        "Duration": timeline.get("total_months", 6),
+    }
+    
+    # Convert agent activities to legacy format
+    # Agent activities have: name, phase, effort_months, assigned_role, dependencies
+    # Legacy format needs: Activities, Description, Owner, Resources, Start Date, End Date, Effort Months
+    
+    activities = []
+    start_date = datetime.now()
+    
+    if timeline.get("start_date"):
+        try:
+            start_date = datetime.fromisoformat(timeline["start_date"].replace("Z", "+00:00"))
+        except:
+            pass
+    
+    current_date = start_date
+    
+    for idx, act in enumerate(activities_list, 1):
+        # Calculate dates based on effort
+        effort_months = act.get("effort_months", 1)
+        effort_days = int(effort_months * 30)
+        end_date = current_date + timedelta(days=effort_days)
+        
+        # Extract resources (dependencies in agent format)
+        resources = act.get("dependencies", [])
+        if isinstance(resources, list):
+            resources_str = ", ".join(resources)
+        else:
+            resources_str = ""
+        
+        activity = {
+            "ID": idx,
+            "Activities": act.get("name", f"Activity {idx}"),
+            "Description": act.get("description", act.get("name", "")),
+            "Owner": act.get("assigned_role", "Project Manager"),
+            "Resources": resources_str,
+            "Start Date": current_date.strftime("%Y-%m-%d"),
+            "End Date": end_date.strftime("%Y-%m-%d"),
+            "Effort Months": effort_months
+        }
+        
+        activities.append(activity)
+        
+        # Move current date forward (with some overlap)
+        current_date = current_date + timedelta(days=int(effort_days * 0.8))
+    
+    # If no activities from agent, create basic structure from phases
+    if not activities and phases:
+        current_date = start_date
+        for idx, phase in enumerate(phases, 1):
+            duration_months = phase.get("duration_months", 1)
+            duration_days = int(duration_months * 30)
+            end_date = current_date + timedelta(days=duration_days)
+            
+            phase_activities = phase.get("activities", [])
+            activity_desc = "; ".join(phase_activities[:3]) if phase_activities else phase.get("name", "")
+            
+            activity = {
+                "ID": idx,
+                "Activities": phase.get("name", f"Phase {idx}"),
+                "Description": activity_desc,
+                "Owner": "Project Manager",
+                "Resources": "Team",
+                "Start Date": current_date.strftime("%Y-%m-%d"),
+                "End Date": end_date.strftime("%Y-%m-%d"),
+                "Effort Months": duration_months
+            }
+            
+            activities.append(activity)
+            current_date = end_date
+    
+    # Build final scope structure
+    scope = {
+        "overview": overview,
+        "activities": activities,
+        "project_summary": {
+            "executive_summary": project_overview.get("objective", ""),
+            "key_deliverables": project_overview.get("key_deliverables", [])
+        }
+    }
+    
+    return scope
+
+
+
 async def generate_project_scope(db: AsyncSession, project) -> dict:
     """
     Generate project scope + architecture diagram + store architecture in DB + return combined JSON.
@@ -2592,70 +2714,57 @@ Generate activities with realistic start/end dates, proper role assignments, and
         logger.warning(f"⚠️ Could not fetch rate card roles: {e}")
         rate_card_roles = list(ROLE_RATE_MAP.keys())
 
-    # ---------- Build + query ----------
-    prompt = _build_scope_prompt(rfp_text, kb_chunks, project, questions_context=questions_context, rate_card_roles=rate_card_roles)
+    # ---------- Build + query with AI AGENT ----------
     try:
-        # Step 1: Generate scope via Ollama with JSON format enforcement
-        logger.info(f"🤖 Calling Ollama for scope generation... (prompt length: {len(prompt)} chars)")
-        raw_text = await anyio.to_thread.run_sync(lambda: ollama_chat(prompt, format_json=True))
-        logger.info(f"📝 Ollama raw response length: {len(raw_text)} chars")
-
-        # Log more of the raw response to debug parsing issues
-        logger.info(f"📝 Ollama response FIRST 1000 chars:\n{raw_text[:1000]}")
-        logger.info(f"📝 Ollama response LAST 1000 chars:\n{raw_text[-1000:]}")
-
-        if not raw_text or len(raw_text.strip()) < 50:
-            logger.error(f"❌ Ollama returned empty or too short response: {len(raw_text)} chars")
-            logger.error("   This usually means:")
-            logger.error("   1. Ollama service is not running properly")
-            logger.error("   2. The model (deepseek-r1) is not loaded")
-            logger.error("   3. Out of memory or timeout")
-            return {}
-
-        raw = _extract_json(raw_text)
-
-        # Log what was extracted
-        logger.info(f"✅ Extracted JSON keys: {list(raw.keys()) if isinstance(raw, dict) else 'NOT A DICT'}")
-        if isinstance(raw, dict):
-            logger.info(f"   - overview: {'present' if raw.get('overview') else 'MISSING'}")
-            logger.info(f"   - activities: {len(raw.get('activities', []))} items")
-            logger.info(f"   - resourcing_plan: {'present (will be auto-generated)' if 'resourcing_plan' in raw else 'not in raw'}")
-            logger.info(f"   - project_summary: {'present' if raw.get('project_summary') else 'MISSING'}")
-        else:
-            logger.error(f"❌ Extracted result is not a dict! Type: {type(raw)}, Value: {raw}")
-            return {}
-
-        # Transform nested schema to flat schema if needed
-        raw = _transform_nested_to_flat_schema(raw, project)
-
-        # Log post-transformation
-        logger.info(f"📊 After transformation - activities: {len(raw.get('activities', []))} items, "
-                   f"overview: {'present' if raw.get('overview') else 'missing'}")
-
-        # Validate that LLM actually generated content, not just structure
-        if raw.get('activities'):
-            activities = raw.get('activities', [])
-            empty_fields_count = 0
-            for act in activities:
-                if (not act.get('Activities', '').strip() or
-                    not act.get('Description', '').strip() or
-                    act.get('Owner', '').lower() in ['unassigned', '']):
-                    empty_fields_count += 1
-
-            if empty_fields_count > len(activities) * 0.7:  # More than 70% are garbage
-                logger.error(f"❌ LLM returned {empty_fields_count}/{len(activities)} activities with empty/invalid content!")
-                logger.error("   This means Ollama generated JSON structure but NO actual content.")
-                logger.error("   Check if:")
-                logger.error("   1. Ollama service is running: curl http://localhost:11434/api/tags")
-                logger.error("   2. Model is loaded: ollama list")
-                logger.error("   3. Sufficient memory available")
-                return {}
-        else:
-            logger.warning(f"⚠️ NO activities found in extracted JSON! This is a problem.")
-            logger.warning(f"   Raw JSON structure: {json.dumps(raw, indent=2)[:500]}")
-
+        # Import agent service
+        from app.services.agent_service import get_scoping_agent
+        
+        logger.info(f"🤖 Using AI Agent for intelligent scope generation...")
+        
+        # Get the agent
+        agent = get_scoping_agent()
+        
+        # Prepare project information for agent
+        project_name = getattr(project, "name", "Untitled Project")
+        domain = getattr(project, "domain", "") or "General"
+        tech_stack = getattr(project, "tech_stack", "") or "Not specified"
+        complexity = getattr(project, "complexity", None)
+        use_cases = getattr(project, "use_cases", None)
+        company_id = str(getattr(project, "company_id", ""))
+        
+        # Use RFP text or fallback
+        final_rfp_text = rfp_text or fallback_text
+        
+        # Call agent to generate scope
+        logger.info(f"🚀 Agent starting autonomous reasoning for project: {project_name}")
+        agent_scope = await agent.generate_scope(
+            project_name=project_name,
+            domain=domain,
+            tech_stack=tech_stack,
+            rfp_text=final_rfp_text,
+            company_id=company_id,
+            db_session=db,
+            complexity=complexity,
+            use_cases=use_cases
+        )
+        
+        logger.info(f"✅ Agent completed scope generation")
+        
+        # Transform agent output to match expected format
+        # Agent returns structured data, we need to convert to activities format
+        raw = _transform_agent_output_to_scope_format(agent_scope, project)
+        
+        # Log what was generated
+        logger.info(f"📊 Agent generated scope with:")
+        logger.info(f"   - Team roles: {len(agent_scope.get('team_composition', []))}")
+        logger.info(f"   - Activities: {len(raw.get('activities', []))}")
+        logger.info(f"   - Total cost: ${agent_scope.get('cost_summary', {}).get('total_cost', 0):,.2f}")
+        logger.info(f"   - Reasoning steps: {agent_scope.get('_agent_metadata', {}).get('reasoning_steps', 0)}")
+        
+        # Clean and format the scope
         cleaned_scope = await clean_scope(db, raw, project=project)
-        # Update project fields from generated overview (just like finalize_scope)
+        
+        # Update project fields from generated overview
         overview = cleaned_scope.get("overview", {})
         if overview:
             project.name = overview.get("Project Name") or project.name
@@ -2669,10 +2778,9 @@ Generate activities with realistic start/end dates, proper role assignments, and
             try:
                 await db.commit()
                 await db.refresh(project)
-                logger.info(f" Project metadata updated from generated scope for project {project.id}")
+                logger.info(f"✅ Project metadata updated from agent-generated scope for project {project.id}")
             except Exception as e:
-                logger.warning(f" Failed to update project metadata: {e}")
-
+                logger.warning(f"⚠️  Failed to update project metadata: {e}")
 
         # Step 2: Generate + store architecture diagram
         try:
@@ -2716,15 +2824,17 @@ Generate activities with realistic start/end dates, proper role assignments, and
             await db.commit()
             await db.refresh(old_file)
 
-            logger.info(f" finalized_scope.json overwritten for project {project.id}")
+            logger.info(f"✅ finalized_scope.json saved for project {project.id}")
 
         except Exception as e:
-            logger.warning(f" Failed to auto-save finalized_scope.json: {e}")
+            logger.warning(f"⚠️  Failed to auto-save finalized_scope.json: {e}")
+        
         return cleaned_scope
 
     except Exception as e:
-        logger.error(f"Ollama scope generation failed: {e}")
+        logger.error(f"❌ Agent scope generation failed: {e}", exc_info=True)
         return {}
+
 
 
 async def regenerate_from_instructions(

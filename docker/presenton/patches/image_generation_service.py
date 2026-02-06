@@ -5,7 +5,7 @@ import os
 import aiohttp
 from fastapi import HTTPException
 from google import genai
-from openai import NOT_GIVEN, AsyncOpenAI
+from openai import NOT_GIVEN, AsyncOpenAI, AsyncAzureOpenAI
 from models.image_prompt import ImagePrompt
 from models.sql.image_asset import ImageAsset
 from utils.get_env import (
@@ -33,8 +33,8 @@ class ImageGenerationService:
     def __init__(self, output_directory: str):
         self.output_directory = output_directory
         # FORCE DISABLE IMAGES to avoid Google API errors
-        self.is_image_generation_disabled = True 
-        # self.is_image_generation_disabled = is_image_generation_disabled()
+        # self.is_image_generation_disabled = True 
+        self.is_image_generation_disabled = is_image_generation_disabled()
         self.image_gen_func = self.get_image_gen_func()
 
     def get_image_gen_func(self):
@@ -109,7 +109,23 @@ class ImageGenerationService:
     async def generate_image_openai(
         self, prompt: str, output_directory: str, model: str, quality: str
     ) -> str:
-        client = AsyncOpenAI()
+        # Check for Azure OpenAI configuration
+        api_type = os.getenv("OPENAI_API_TYPE")
+        api_base = os.getenv("OPENAI_API_BASE")
+        api_version = os.getenv("OPENAI_API_VERSION")
+        api_key = os.getenv("OPENAI_API_KEY")
+
+        if api_type == "azure" and api_base:
+            # Use Azure Client
+            client = AsyncAzureOpenAI(
+                api_key=api_key,
+                azure_endpoint=api_base,
+                api_version=api_version or "2024-02-15-preview",
+            )
+        else:
+            # Use Standard OpenAI Client
+            client = AsyncOpenAI(api_key=api_key)
+
         result = await client.images.generate(
             model=model,
             prompt=prompt,
@@ -129,7 +145,7 @@ class ImageGenerationService:
         return await self.generate_image_openai(
             prompt,
             output_directory,
-            "dall-e-3",
+            os.getenv("AZURE_OPENAI_DALLE3_DEPLOYMENT_NAME", "dall-e-3"),
             get_dall_e_3_quality_env() or "standard",
         )
 

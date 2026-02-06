@@ -81,8 +81,8 @@ class PresentonClient:
             # Explicitly specify Azure OpenAI to override default Google Gemini
             "llm_provider": "azureopenai",
             "llm_model": "gpt-4o",
-            "enable_images": False,
-            "image_provider": "azureopenai"
+            "enable_images": True,
+            "image_provider": "dall-e-3"
         }
 
         
@@ -114,7 +114,7 @@ class PresentonClient:
                 ],
                 capture_output=True,
                 text=True,
-                timeout=120
+                timeout=600
             )
             
             # Clean up temp file

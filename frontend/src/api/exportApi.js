@@ -112,6 +112,13 @@ const exportApi = {
     });
   },
 
+  exportToJson: async (projectId, { signal, onDownloadProgress } = {}) => {
+    return api.get(`/projects/${projectId}/export/json`, {
+      signal,
+      onDownloadProgress,
+    }).then(res => res.data);
+  },
+
 
 
 };

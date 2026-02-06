@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useETL } from "../contexts/ETLContext";
+
 import * as presentonApi from "../api/presentonApi";
 import projectApi from "../api/projectApi";
 import {
@@ -13,8 +14,8 @@ import {
   TrendingUp,
   Play,
   BookOpen,
-  Presentation,
   ExternalLink,
+  Presentation,
 } from "lucide-react";
 
 export default function ETLDashboard() {
@@ -55,6 +56,8 @@ export default function ETLDashboard() {
   const [generatingPresenton, setGeneratingPresenton] = useState(false);
   const [lastGeneratedPresentation, setLastGeneratedPresentation] = useState(null);
 
+
+
   useEffect(() => {
     // Initial load
     loadStats();
@@ -64,11 +67,11 @@ export default function ETLDashboard() {
     loadKBDocuments();
     loadPendingCaseStudies();
 
-    // Check if scan was running when page loaded
-    initializeScanState();
-
     // Check Presenton health
     checkPresentonHealth();
+
+    // Check if scan was running when page loaded
+    initializeScanState();
 
     // Cleanup on unmount
     return () => {
@@ -77,18 +80,6 @@ export default function ETLDashboard() {
       }
     };
   }, [loadStats, loadPendingUpdates, loadProcessingJobs, loadKBDocuments, loadPendingCaseStudies]);
-
-  // Check Presenton service health
-  const checkPresentonHealth = async () => {
-    try {
-      const response = await fetch('/api/presenton/health');
-      const data = await response.json();
-      setPresentonStatus(data.status);
-    } catch (error) {
-      console.error('Failed to check Presenton health:', error);
-      setPresentonStatus('unavailable');
-    }
-  };
 
   // Initialize scan state on mount (check if scan is running)
   const initializeScanState = async () => {
@@ -270,15 +261,16 @@ export default function ETLDashboard() {
     }
   };
 
-  // Helper function to check if a job failed recently (within last 24 hours)
-  const getRecentFailedJobs = () => {
-    const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
-    return processingJobs.filter(job => {
-      if (job.status !== "failed") return false;
-      const failedAt = job.completed_at || job.started_at;
-      if (!failedAt) return true; // Include if no timestamp (safety)
-      return new Date(failedAt) > twentyFourHoursAgo;
-    });
+  // Check Presenton service health
+  const checkPresentonHealth = async () => {
+    try {
+      const response = await fetch('/api/presenton/health');
+      const data = await response.json();
+      setPresentonStatus(data.status);
+    } catch (error) {
+      console.error('Failed to check Presenton health:', error);
+      setPresentonStatus('unavailable');
+    }
   };
 
   // Load projects for Presenton modal
@@ -324,6 +316,19 @@ export default function ETLDashboard() {
     setShowProjectSelector(true);
     loadProjectsForPresenton();
   };
+
+  // Helper function to check if a job failed recently (within last 24 hours)
+  const getRecentFailedJobs = () => {
+    const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    return processingJobs.filter(job => {
+      if (job.status !== "failed") return false;
+      const failedAt = job.completed_at || job.started_at;
+      if (!failedAt) return true; // Include if no timestamp (safety)
+      return new Date(failedAt) > twentyFourHoursAgo;
+    });
+  };
+
+
 
   return (
     <div className="space-y-6">
@@ -380,6 +385,8 @@ export default function ETLDashboard() {
           </div>
         </div>
       )}
+
+
 
       {/* Presenton AI Presentation Studio Section */}
       <div className="bg-gradient-to-br from-purple-50 to-indigo-50 dark:from-purple-900/20 dark:to-indigo-900/20 rounded-2xl p-6 border border-purple-200 dark:border-purple-800 shadow-sm">

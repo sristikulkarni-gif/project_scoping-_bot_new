@@ -62,14 +62,7 @@ const exportApi = {
     return res.data;
   },
 
-  previewPptx: async (projectId, scope, { signal, onDownloadProgress } = {}) => {
-    const res = await api.post(
-      `/projects/${projectId}/export/preview/pptx`,
-      scope,
-      { responseType: "blob", signal, onDownloadProgress }
-    );
-    return res.data;
-  },
+
 
   // ---------- Finalize Scope ----------
   finalizeScope: async (projectId, scope, { signal } = {}) => {
@@ -119,27 +112,7 @@ const exportApi = {
     });
   },
 
-  exportToPptx: async (projectId, { signal, onDownloadProgress } = {}) => {
-    return fetchExportBlob(`/projects/${projectId}/export/pptx`, {
-      signal,
-      onDownloadProgress,
-    });
-  },
 
-  exportToJson: async (projectId, { signal, onDownloadProgress } = {}) => {
-    const res = await api.get(`/projects/${projectId}/export/json`, {
-      signal,
-      onDownloadProgress,
-    });
-    return res.data;
-  },
-
-  exportToSmartPptx: async (projectId, { signal, onDownloadProgress } = {}) => {
-    return fetchExportBlob(`/projects/${projectId}/export/smart-pptx`, {
-      signal,
-      onDownloadProgress,
-    });
-  },
 
 };
 

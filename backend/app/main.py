@@ -113,6 +113,7 @@ app.include_router(etl.router)
 app.include_router(case_studies.router)
 app.include_router(presenton.router)
 
+
 # ---------- Startup Event ----------
 @app.on_event("startup")
 async def startup_event():

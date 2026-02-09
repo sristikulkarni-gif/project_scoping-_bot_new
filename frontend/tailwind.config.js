@@ -9,21 +9,21 @@ export default {
     extend: {
       colors: {
         //  Light mode palette
-        primary: "#0d9488",   // Teal-600
-        secondary: "#f97316", // Orange-500
-        accent: "#14b8a6",    // Teal-500
-        muted: "#64748b",     // Slate-500
-        background: "#f1f5f9", // Slate-50
+        primary: "var(--primary)",
+        secondary: "var(--secondary)",
+        accent: "var(--accent)",
+        muted: "var(--muted)", // Ensure this variable exists or keep a fallback
+        background: "var(--light)",
         surface: "#ffffff",   // White
 
         // Dark mode palette
         dark: {
-          primary: "#2dd4bf",   // Teal-400
-          secondary: "#fb923c", // Orange-400
-          accent: "#5eead4",    // Teal-300
-          muted: "#94a3b8",     // Slate-400
-          background: "#0f172a", // Slate-900
-          surface: "#1e293b",   // Slate-800
+          primary: "#6366f1", // Update these too or map to vars
+          secondary: "#ec4899",
+          accent: "#8b5cf6",
+          muted: "#94a3b8",
+          background: "var(--dark)",
+          surface: "#1e293b",
         },
       },
       fontFamily: {

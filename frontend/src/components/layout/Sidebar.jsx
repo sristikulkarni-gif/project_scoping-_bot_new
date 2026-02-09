@@ -21,7 +21,7 @@ export default function Sidebar({ isOpen, setIsOpen, mobileOpen }) {
 
   const latestProjectId = projects?.length
     ? [...projects]
-        .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0]?.id
+      .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0]?.id
     : null;
 
   // Base nav items (everyone)
@@ -33,10 +33,10 @@ export default function Sidebar({ isOpen, setIsOpen, mobileOpen }) {
   // Add Knowledge Base and ETL Pipeline only for superusers
   const navItems = user?.is_superuser
     ? [
-        ...baseNavItems,
-        { path: "/blobs", label: "Knowledge Base", icon: <Database className="w-5 h-5" /> },
-        { path: "/etl", label: "ETL Pipeline", icon: <GitBranch className="w-5 h-5" /> },
-      ]
+      ...baseNavItems,
+      { path: "/blobs", label: "Knowledge Base", icon: <Database className="w-5 h-5" /> },
+      { path: "/etl", label: "ETL Pipeline", icon: <GitBranch className="w-5 h-5" /> },
+    ]
     : baseNavItems;
 
   const handleNavClick = () => {
@@ -48,12 +48,12 @@ export default function Sidebar({ isOpen, setIsOpen, mobileOpen }) {
   return (
     <aside
       className={`fixed md:static left-0
-        mt-16 md:mt-0
-        h-[calc(100vh-64px)] md:h-screen
+        mt-16 md:mt-4 md:mb-4 md:ml-4 rounded-2xl
+        h-[calc(100vh-64px)] md:h-[calc(100vh-32px)]
         flex flex-col justify-between
         ${isOpen ? "w-64" : "w-20"}
-        bg-white/80 dark:bg-dark-surface/80 backdrop-blur-xl
-        shadow-2xl border-r border-gray-200/50 dark:border-dark-muted/50
+        bg-white dark:bg-dark-surface backdrop-blur-xl
+        shadow-2xl border border-gray-100 dark:border-dark-muted
         transform transition-all duration-300 z-40
         ${mobileOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"}`}
     >
@@ -82,10 +82,9 @@ export default function Sidebar({ isOpen, setIsOpen, mobileOpen }) {
               to={item.path}
               onClick={handleNavClick}
               className={({ isActive }) =>
-                `group flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 relative ${
-                  isActive
-                    ? "bg-gradient-to-r from-primary to-accent text-white font-semibold shadow-lg shadow-primary/30"
-                    : "text-gray-700 dark:text-gray-300 hover:bg-gradient-to-r hover:from-primary/10 hover:to-accent/10 dark:hover:from-dark-primary/20 dark:hover:to-dark-accent/20"
+                `group flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 relative ${isActive
+                  ? "bg-gradient-to-r from-primary to-accent text-white font-semibold shadow-lg shadow-primary/30"
+                  : "text-gray-700 dark:text-gray-300 hover:bg-gradient-to-r hover:from-primary/10 hover:to-accent/10 dark:hover:from-dark-primary/20 dark:hover:to-dark-accent/20"
                 }`
               }
             >
@@ -93,9 +92,8 @@ export default function Sidebar({ isOpen, setIsOpen, mobileOpen }) {
                 {item.icon}
               </div>
               <span
-                className={`font-medium transition-all duration-300 origin-left whitespace-nowrap ${
-                  isOpen ? "opacity-100 scale-100" : "opacity-0 scale-0 w-0 hidden"
-                }`}
+                className={`font-medium transition-all duration-300 origin-left whitespace-nowrap ${isOpen ? "opacity-100 scale-100" : "opacity-0 scale-0 w-0 hidden"
+                  }`}
               >
                 {item.label}
               </span>

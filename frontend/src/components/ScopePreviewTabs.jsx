@@ -9,18 +9,21 @@ import GanttChart from './GanttChart';
 const ArchitectureDiagramViewer = ({ imageUrl }) => {
   const [currentUrl, setCurrentUrl] = useState(imageUrl);
   const [hasError, setHasError] = useState(false);
+  const [zoom, setZoom] = useState(1);
 
   const handleError = () => {
-    // If it was a PNG and failed, try SVG fallback
     if (currentUrl.includes('.png')) {
       console.log('⚠️ PNG failed, trying SVG fallback...');
       setCurrentUrl(currentUrl.replace('.png', '.svg'));
     } else {
-      // Already tried fallback or was not PNG
       console.error('❌ Image failed to load:', currentUrl);
       setHasError(true);
     }
   };
+
+  const handleZoomIn = () => setZoom((z) => Math.min(z + 0.25, 3));
+  const handleZoomOut = () => setZoom((z) => Math.max(z - 0.25, 0.5));
+  const handleResetZoom = () => setZoom(1);
 
   if (hasError) {
     return (
@@ -37,28 +40,48 @@ const ArchitectureDiagramViewer = ({ imageUrl }) => {
 
   return (
     <div className="relative group w-full bg-gray-50 dark:bg-gray-800/50 rounded-lg border border-gray-200 dark:border-gray-700 h-[80vh] min-h-[500px] flex flex-col overflow-hidden">
-      <div className="absolute top-4 right-4 z-10 transition-opacity opacity-70 hover:opacity-100 bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm rounded-md shadow-sm">
+      {/* Controls Toolbar */}
+      <div className="absolute top-4 right-4 z-10 flex gap-2 transition-opacity opacity-70 hover:opacity-100">
+        <div className="flex bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm rounded-md shadow-sm border border-gray-200 dark:border-gray-600">
+          <button onClick={handleZoomOut} className="px-3 py-1.5 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-l text-gray-700 dark:text-gray-200" title="Zoom Out"> - </button>
+          <span className="px-2 py-1.5 text-sm font-medium border-x border-gray-200 dark:border-gray-600 text-gray-700 dark:text-gray-200">{Math.round(zoom * 100)}%</span>
+          <button onClick={handleZoomIn} className="px-3 py-1.5 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-r text-gray-700 dark:text-gray-200" title="Zoom In"> + </button>
+        </div>
+
+        <button
+          onClick={handleResetZoom}
+          className="bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm rounded-md shadow-sm px-3 py-1.5 text-sm font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 border border-gray-200 dark:border-gray-600"
+        >
+          Reset
+        </button>
+
         <a
           href={currentUrl}
           target="_blank"
           rel="noreferrer"
-          className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-gray-700 dark:text-gray-200 hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
-          title="View full size image"
+          className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm rounded-md shadow-sm text-gray-700 dark:text-gray-200 hover:text-blue-600 dark:hover:text-blue-400 border border-gray-200 dark:border-gray-600 transition-colors"
+          title="Download original"
+          download
         >
           <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
           </svg>
-          Open Full Image
         </a>
       </div>
 
-      <div className="flex-1 w-full overflow-auto p-8">
-        <div className="min-w-min min-h-min flex justify-center">
+      <div className="flex-1 w-full overflow-auto p-8 cursor-grab active:cursor-grabbing">
+        <div className="min-w-min min-h-min flex justify-center items-center h-full">
           <img
             src={currentUrl}
             alt="Architecture Diagram"
+            style={{
+              transform: `scale(${zoom})`,
+              transformOrigin: 'center center',
+              transition: 'transform 0.2s ease-out'
+            }}
             className="max-w-none shadow-lg bg-white dark:bg-gray-800 rounded-md"
             onError={handleError}
+            draggable={false}
           />
         </div>
       </div>

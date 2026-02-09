@@ -1,7 +1,91 @@
 import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import projectApi from "../api/projectApi";
-import { RefreshCw, Download, File, Archive, X, Save } from "lucide-react";
+import { RefreshCw, Download, File, Archive, X, Save, Plus, Minus } from "lucide-react";
+
+/**
+ * Modal to view Architecture Diagram with Zoom/Pan controls
+ */
+const DiagramModal = ({ src, onClose }) => {
+  const [zoom, setZoom] = useState(1);
+
+  const handleZoomIn = () => setZoom((z) => Math.min(z + 0.25, 3));
+  const handleZoomOut = () => setZoom((z) => Math.max(z - 0.25, 0.5));
+  const handleResetZoom = () => setZoom(1);
+
+  return (
+    <div
+      className="fixed inset-0 bg-black/90 z-[60] flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in duration-200"
+      onClick={onClose}
+    >
+      <div className="relative max-w-[95vw] max-h-[95vh] w-full h-full flex items-center justify-center flex-col">
+        {/* Controls Toolbar */}
+        <div className="absolute top-4 right-4 z-50 flex gap-2" onClick={(e) => e.stopPropagation()}>
+          <div className="flex bg-white/10 backdrop-blur-md rounded-lg shadow-lg border border-white/20 overflow-hidden">
+            <button onClick={handleZoomOut} className="px-3 py-2 hover:bg-white/10 text-white transition" title="Zoom Out">
+              <Minus className="w-4 h-4" />
+            </button>
+            <span className="px-2 py-2 text-sm font-medium border-x border-white/20 text-white flex items-center min-w-[3rem] justify-center">
+              {Math.round(zoom * 100)}%
+            </span>
+            <button onClick={handleZoomIn} className="px-3 py-2 hover:bg-white/10 text-white transition" title="Zoom In">
+              <Plus className="w-4 h-4" />
+            </button>
+          </div>
+
+          <button
+            onClick={handleResetZoom}
+            className="bg-white/10 hover:bg-white/20 text-white backdrop-blur-md rounded-lg shadow-lg px-3 py-2 text-sm font-medium border border-white/20 transition"
+          >
+            Reset
+          </button>
+
+          <a
+            href={src}
+            download
+            target="_blank"
+            rel="noopener noreferrer"
+            className="bg-primary/90 hover:bg-primary text-white backdrop-blur-md rounded-lg shadow-lg px-3 py-2 border border-white/20 flex items-center justify-center transition"
+            title="Download Diagram"
+          >
+            <Download className="w-5 h-5" />
+          </a>
+
+          <button
+            onClick={onClose}
+            className="bg-black/50 hover:bg-red-500/80 text-white backdrop-blur-md rounded-lg shadow-lg px-3 py-2 border border-white/20 flex items-center justify-center transition ml-2"
+          >
+            <X className="w-6 h-6" />
+          </button>
+        </div>
+
+        {/* Image Container with Scroll/Pan */}
+        <div
+          className="flex-1 w-full overflow-auto flex items-center justify-center cursor-grab active:cursor-grabbing p-4 rounded-lg"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <img
+            src={src}
+            alt="Architecture Diagram Full Size"
+            style={{
+              transform: `scale(${zoom})`,
+              transformOrigin: 'center center',
+              transition: 'transform 0.2s ease-out'
+            }}
+            className="max-w-none object-contain shadow-2xl rounded-md bg-white dark:bg-gray-800"
+            draggable={false}
+            onError={(e) => {
+              const currentSrc = e.target.src;
+              if (currentSrc.includes('.svg')) {
+                e.target.src = currentSrc.replace('.svg', '.png');
+              }
+            }}
+          />
+        </div>
+      </div>
+    </div>
+  );
+};
 
 export default function ProjectDetails() {
   const { id } = useParams();
@@ -337,31 +421,10 @@ export default function ProjectDetails() {
 
       {/* Lightbox Modal for Architecture Diagram */}
       {isImageModalOpen && finalizedScope?.architecture_diagram && (
-        <div
-          className="fixed inset-0 bg-black/90 z-[60] flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in duration-200"
-          onClick={() => setIsImageModalOpen(false)}
-        >
-          <div className="relative max-w-[95vw] max-h-[95vh] w-full h-full flex items-center justify-center">
-            <button
-              onClick={() => setIsImageModalOpen(false)}
-              className="absolute top-4 right-4 bg-black/50 hover:bg-black/70 text-white rounded-full p-2 transition z-50 border border-white/20"
-            >
-              <X className="w-6 h-6" />
-            </button>
-            <img
-              src={`${import.meta.env.VITE_API_URL || 'http://localhost:8000'}/api/blobs/download/${finalizedScope.architecture_diagram?.replace('.png', '.svg')}?base=projects`}
-              alt="Architecture Diagram Full Size"
-              className="max-w-full max-h-full object-contain rounded-md shadow-2xl"
-              onClick={(e) => e.stopPropagation()} // Prevent click from closing modal
-              onError={(e) => {
-                const currentSrc = e.target.src;
-                if (currentSrc.includes('.svg')) {
-                  e.target.src = currentSrc.replace('.svg', '.png');
-                }
-              }}
-            />
-          </div>
-        </div>
+        <DiagramModal
+          src={`${import.meta.env.VITE_API_URL || 'http://localhost:8000'}/api/blobs/download/${finalizedScope.architecture_diagram?.replace('.png', '.svg')}?base=projects`}
+          onClose={() => setIsImageModalOpen(false)}
+        />
       )}
 
       {/* Closeout Modal */}

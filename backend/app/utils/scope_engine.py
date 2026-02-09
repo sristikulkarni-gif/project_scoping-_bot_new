@@ -2242,6 +2242,86 @@ async def clean_scope(db: AsyncSession, data: Dict[str, Any], project=None) -> D
                 cur = datetime(cur.year, cur.month + 1, 1)
         return month_eff
 
+    # --- NEW: Rescale activities if duration differs significantly from project.duration ---
+    target_months = 0.0
+    try:
+        # 1. Parse target duration from project metadata
+        # Handle project duration (e.g. "7 months", "6", "approx 7")
+        raw_duration = str(getattr(project, "duration", "") or "").lower().strip()
+        
+        # If not in project, check if it's in the data['overview']
+        if not raw_duration and data.get("overview"):
+            raw_duration = str(data.get("overview", {}).get("Duration", "") or "").lower().strip()
+            
+        if raw_duration:
+            # Extract first number found
+            match = re.search(r"(\d+(\.\d+)?)", raw_duration)
+            if match:
+                target_months = float(match.group(1))
+                
+        # 2. Calculate current inferred duration from activities
+        if target_months > 0 and data.get("activities"):
+            temp_starts = []
+            temp_ends = []
+            valid_acts = []
+            
+            for a in data.get("activities", []):
+                s_date = _parse_date_safe(a.get("Start Date"), today)
+                # If end date is missing or invalid, assume 1 month
+                e_date_raw = a.get("End Date")
+                if not e_date_raw:
+                    e_date = s_date + timedelta(days=30)
+                else:
+                    e_date = _parse_date_safe(e_date_raw, s_date + timedelta(days=30))
+                
+                if e_date < s_date:
+                    e_date = s_date + timedelta(days=30)
+                    
+                temp_starts.append(s_date)
+                temp_ends.append(e_date)
+                valid_acts.append({
+                    "act": a, 
+                    "s": s_date, 
+                    "e": e_date, 
+                    "duration_days": (e_date - s_date).days
+                })
+            
+            # Filter out generic default dates if possible, but for now just use all
+            if temp_starts and temp_ends:
+                min_s = min(temp_starts)
+                max_e = max(temp_ends)
+                current_days = (max_e - min_s).days
+                current_months = current_days / 30.0
+                
+                # 3. Check if rescaling is needed (allow 10% tolerance)
+                if current_months > 0 and abs(current_months - target_months) / max(current_months, 1.0) > 0.1:
+                    logger.info(f"⚖️ Rescaling project schedule: {current_months:.2f} months -> {target_months:.2f} months")
+                    ratio = target_months / current_months
+                    
+                    # Apply scaling
+                    for item in valid_acts:
+                        act = item["act"]
+                        # Use start date of the item to offset correctly
+                        offset_days = (item["s"] - min_s).days
+                        new_offset_days = int(offset_days * ratio)
+                        
+                        # Calculate new duration
+                        old_duration = item["duration_days"]
+                        new_duration_days = max(1, int(old_duration * ratio))
+                        
+                        # Set new dates
+                        new_s = min_s + timedelta(days=new_offset_days)
+                        new_e = new_s + timedelta(days=new_duration_days)
+                        
+                        # Update activity in place
+                        act["Start Date"] = new_s.strftime("%Y-%m-%d")
+                        act["End Date"] = new_e.strftime("%Y-%m-%d")
+                        # Update effort estimate too
+                        act["Effort Months"] = round_to_half(new_duration_days / 30.0)
+                        
+    except Exception as e:
+        logger.warning(f"⚠️ Failed to rescale project duration: {e}")
+
     # --- Process activities ---
     for idx, a in enumerate(data.get("activities") or [], start=1):
         owner = a.get("Owner") or "Unassigned"
@@ -2294,8 +2374,26 @@ async def clean_scope(db: AsyncSession, data: Dict[str, Any], project=None) -> D
     # --- Project span & month labels (Month 1, Month 2, ...) ---
     min_start = min(start_dates) if start_dates else today
     max_end = max(end_dates) if end_dates else min_start
-    duration = max(1.0, round(max(1, (max_end - min_start).days) / 30.0, 2))
-    total_months = max(1, math.ceil((max_end - min_start).days / 30.0))
+    duration_days = (max_end - min_start).days
+    total_months_full = int(duration_days / 30)
+    remaining_days = duration_days % 30
+    
+    if total_months_full == 0:
+        if remaining_days == 0:
+            formatted_duration = "1 day" # Minimum
+        else:
+            formatted_duration = f"{remaining_days} days"
+    else:
+        month_str = "month" if total_months_full == 1 else "months"
+        if remaining_days <= 1: # Ignore negligible days
+            formatted_duration = f"{total_months_full} {month_str}"
+        elif remaining_days > 20: # Round up
+            formatted_duration = f"{total_months_full + 1} months"
+        else:
+            formatted_duration = f"{total_months_full} {month_str}, {remaining_days} days"
+
+    duration = formatted_duration
+    total_months = max(1, math.ceil(duration_days / 30.0))
 
     month_labels = [f"Month {i}" for i in range(1, total_months + 1)]
 

@@ -154,8 +154,8 @@ export default function Dashboard() {
               <Bar dataKey="count" fill="url(#colorGradient)" radius={[8, 8, 0, 0]} />
               <defs>
                 <linearGradient id="colorGradient" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#14b8a6" />
-                  <stop offset="100%" stopColor="#0d9488" />
+                  <stop offset="0%" stopColor="#8b5cf6" />
+                  <stop offset="100%" stopColor="#6366f1" />
                 </linearGradient>
               </defs>
             </BarChart>
@@ -188,10 +188,10 @@ export default function Dashboard() {
               <Line
                 type="monotone"
                 dataKey="count"
-                stroke="#14b8a6"
+                stroke="#6366f1"
                 strokeWidth={3}
-                dot={{ r: 4, fill: "#14b8a6", strokeWidth: 2, stroke: "#fff" }}
-                activeDot={{ r: 6, fill: "#0d9488", strokeWidth: 3, stroke: "#fff" }}
+                dot={{ r: 4, fill: "#6366f1", strokeWidth: 2, stroke: "#fff" }}
+                activeDot={{ r: 6, fill: "#ec4899", strokeWidth: 3, stroke: "#fff" }}
               />
             </LineChart>
           </ResponsiveContainer>

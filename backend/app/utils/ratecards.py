@@ -28,6 +28,36 @@ async def get_or_create_sigmoid_company(db: AsyncSession) -> models.Company:
         await db.commit()
         await db.refresh(company)
         logger.info("Created global Sigmoid company.")
+    
+    # Check if rate cards exist, if not seed them
+    result_rc = await db.execute(
+        select(models.RateCard).filter(models.RateCard.company_id == company.id)
+    )
+    if not result_rc.scalars().first():
+        logger.info(f"Seeding default rate cards for company {company.name}")
+        default_rates = [
+            ("Project Manager", 12000),
+            ("Solution Architect", 15000),
+            ("Senior Backend Developer", 10000),
+            ("Backend Developer", 8000),
+            ("Senior Frontend Developer", 10000),
+            ("Frontend Developer", 8000),
+            ("UI/UX Designer", 9000),
+            ("QA Engineer", 7000),
+            ("DevOps Engineer", 11000),
+            ("Business Analyst", 9000),
+        ]
+        
+        for role, rate in default_rates:
+            rc = models.RateCard(
+                company_id=company.id,
+                user_id=None,
+                role_name=role,
+                monthly_rate=rate,
+            )
+            db.add(rc)
+        await db.commit()
+    
     return company
 
 

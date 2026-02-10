@@ -199,7 +199,7 @@ async def get_rate_cards_async(company_id: str, db_session: AsyncSession) -> Dic
             return default_rates
         
         # Convert to dictionary
-        rates = {rc.role: float(rc.rate) for rc in rate_cards}
+        rates = {rc.role_name: float(rc.monthly_rate) for rc in rate_cards}
         logger.info(f"✅ Retrieved {len(rates)} rate cards")
         
         return rates

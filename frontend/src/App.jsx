@@ -19,7 +19,8 @@ const ProjectsHistory = lazy(() => import("./pages/ProjectsHistory"));
 const Profile = lazy(() => import("./pages/Profile"));
 const BlobDashboard = lazy(() => import("./pages/BlobDashboard"));
 const RateCards = lazy(() => import("./pages/RateCards"));
-const ETLDashboard = lazy(() => import("./pages/ETLDashboard")); 
+const ETLDashboard = lazy(() => import("./pages/ETLDashboard"));
+const AccuracyDashboard = lazy(() => import("./pages/AccuracyDashboard"));
 
 
 export default function App() {
@@ -124,6 +125,16 @@ export default function App() {
             element={
               <ProtectedRoute>
                 <ETLDashboard />
+              </ProtectedRoute>
+            }
+          />
+
+          {/* Accuracy Dashboard */}
+          <Route
+            path="/accuracy"
+            element={
+              <ProtectedRoute>
+                <AccuracyDashboard />
               </ProtectedRoute>
             }
           />

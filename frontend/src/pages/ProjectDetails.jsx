@@ -154,13 +154,45 @@ export default function ProjectDetails() {
       alert("Cannot close project without finalized activities.");
       return;
     }
-    // Initialize actuals from estimates
+
+    // Build a map of Role -> Monthly Rate from resourcing plan
+    const roleRates = {};
+    if (finalizedScope.resourcing_plan) {
+      finalizedScope.resourcing_plan.forEach(role => {
+        // Ensure we parse the rate as a float
+        const rate = parseFloat(role['Rate/month']) || 2500; // Default fallback
+        roleRates[role.Resources] = rate;
+      });
+    }
+
+    // Initialize actuals from estimates with calculated costs
     const initialActuals = {};
     finalizedScope.activities.forEach(act => {
+      // 1. Identify all roles involved (Owner + Resources)
+      const owner = act.Owner || '';
+      const resourcesVal = act.Resources || '';
+      const resourceList = resourcesVal.split(',').map(r => r.trim()).filter(r => r);
+
+      const allRoles = [...new Set([owner, ...resourceList].filter(r => r))]; // Unique roles only
+
+      // 2. Sum up monthly burn rate for this activity
+      // Note: This assumes all listed resources work full-time on this activity for its duration
+      // which is the standard assumption in the scoping engine.
+      let monthlyBurn = 0;
+      allRoles.forEach(r => {
+        monthlyBurn += roleRates[r] || 2500; // Default if role not found
+      });
+
+      // 3. Calculate total estimated cost
+      const durationMonths = parseFloat(act['Effort Months']) || 0;
+      const estimatedCostVal = (monthlyBurn * durationMonths).toFixed(2);
+
       initialActuals[act.ID] = {
         name: act['Activities'],
         estimated_duration: act['Effort Months'] + ' months',
         actual_duration: act['Effort Months'], // Default to estimate
+        estimated_cost: estimatedCostVal, // Pre-filled calculated cost
+        actual_cost: '', // User to enter
         notes: ''
       };
     });
@@ -176,6 +208,9 @@ export default function ProjectDetails() {
           name: a.name,
           estimated_duration: a.estimated_duration,
           actual_duration: a.actual_duration + ' months',
+          estimated_cost: a.estimated_cost || '0',
+          // If actual_cost is empty, use estimated_cost (meaning estimate was accurate)
+          actual_cost: a.actual_cost || a.estimated_cost || '0',
           notes: a.notes
         }))
       };
@@ -453,6 +488,8 @@ export default function ProjectDetails() {
                     <th className="px-4 py-3">Activity</th>
                     <th className="px-4 py-3">Est. Months</th>
                     <th className="px-4 py-3 w-32">Actual Months</th>
+                    <th className="px-4 py-3 w-32">Est. Cost ($)</th>
+                    <th className="px-4 py-3 w-32">Actual Cost ($)</th>
                     <th className="px-4 py-3">Notes (Why different?)</th>
                   </tr>
                 </thead>
@@ -470,6 +507,32 @@ export default function ProjectDetails() {
                           onChange={(e) => setActuals({
                             ...actuals,
                             [key]: { ...actuals[key], actual_duration: e.target.value }
+                          })}
+                        />
+                      </td>
+                      <td className="px-4 py-2">
+                        <input
+                          type="number"
+                          step="1000"
+                          placeholder="50000"
+                          className="w-full p-1 border rounded"
+                          value={actuals[key].estimated_cost}
+                          onChange={(e) => setActuals({
+                            ...actuals,
+                            [key]: { ...actuals[key], estimated_cost: e.target.value }
+                          })}
+                        />
+                      </td>
+                      <td className="px-4 py-2">
+                        <input
+                          type="number"
+                          step="1000"
+                          placeholder="62500"
+                          className="w-full p-1 border rounded"
+                          value={actuals[key].actual_cost}
+                          onChange={(e) => setActuals({
+                            ...actuals,
+                            [key]: { ...actuals[key], actual_cost: e.target.value }
                           })}
                         />
                       </td>

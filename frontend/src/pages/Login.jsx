@@ -15,16 +15,27 @@ export default function Login() {
       // Login and get tokens
       const res = await authApi.login(email, password);
 
+      // Save token under both keys for compatibility
       localStorage.setItem("access_token", res.data.access_token);
+      localStorage.setItem("token", res.data.access_token); // For AccuracyDashboard
       if (res.data.refresh_token) {
         localStorage.setItem("refresh_token", res.data.refresh_token);
       }
+      localStorage.setItem("isAuthenticated", "true");
 
-      // Fetch user profile
+      // Fetch and save user profile
+      try {
+        const userRes = await authApi.getMe();
+        localStorage.setItem("user", JSON.stringify(userRes.data));
+      } catch (userErr) {
+        console.error("Failed to fetch user profile:", userErr);
+      }
+
+      // Navigate to dashboard
       navigate("/dashboard");
     } catch (err) {
-      console.error(" Login error:", err);
-      alert(" Login failed. Check your credentials and try again.");
+      console.error("❌ Login error:", err);
+      alert("❌ Login failed. Check your credentials and try again.");
     } finally {
       setLoading(false);
     }

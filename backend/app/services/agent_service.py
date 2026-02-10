@@ -132,10 +132,17 @@ class ProjectScopingAgent:
             response = await self.llm.ainvoke(messages)
             
             logger.info("✅ Agent completed reasoning")
+            logger.info(f"🔍 Raw Agent Response (first 500 chars): {response.content[:500]}")
             
             # Parse JSON from response
-            scope_data = self._extract_json_from_response(response.content)
-            
+            try:
+                scope_data = self._extract_json_from_response(response.content)
+                logger.info("✅ JSON extracted successfully from agent response")
+            except Exception as e:
+                logger.error(f"❌ JSON Extraction Failed: {e}")
+                logger.error(f"   Full Agent Response: {response.content}")
+                raise
+
             # Add metadata
             scope_data['_agent_metadata'] = {
                 "generated_at": datetime.utcnow().isoformat(),
@@ -243,12 +250,15 @@ Return your response as a properly formatted JSON object following the schema in
         json_obj_match = re.search(r'\{.*\}', response_text, re.DOTALL)
         if json_obj_match:
             try:
+                logger.info("Found JSON object in text, attempting parse...")
                 return json.loads(json_obj_match.group(0))
             except json.JSONDecodeError:
+                logger.warning("Failed to parse JSON object found in text")
                 pass
         
         # If all else fails, raise error
-        logger.error(f"Failed to extract JSON from response: {response_text[:500]}")
+        logger.error(f"Failed to extract JSON from response. Length: {len(response_text)}")
+        logger.error(f"Response Preview: {response_text[:500]}...")
         raise ValueError("Agent did not return valid JSON. Response: " + response_text[:500])
     
     def _extract_tools_used(self, messages: list) -> list:

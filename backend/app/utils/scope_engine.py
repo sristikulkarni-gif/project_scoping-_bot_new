@@ -215,7 +215,6 @@ def _normalize_activity_fields(act: dict, activity_id: int) -> dict:
     }
 
 
-def _transform_nested_to_flat_schema(raw: dict, project) -> dict:
     """
     Transform LLM's nested schema (with phases containing activities)
     into the flat schema expected by the backend.
@@ -2206,7 +2205,9 @@ async def generate_architecture(
     await db.commit()
     await db.refresh(db_file_png)
 
-    return db_file_png, blob_name_png
+    # Return the full blob path including 'projects/' prefix for correct retrieval
+    full_blob_path = f"projects/{blob_name_png}"
+    return db_file_png, full_blob_path
 
 
 

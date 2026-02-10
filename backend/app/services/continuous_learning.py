@@ -44,6 +44,8 @@ async def process_project_closeout(
             f"- Activity: {act['name']}\n"
             f"  Estimated Duration: {act.get('estimated_duration', 'N/A')}\n"
             f"  ACTUAL DURATION: {act['actual_duration']}\n"
+            f"  Estimated Cost: ${act.get('estimated_cost', 'N/A')}\n"
+            f"  ACTUAL COST: ${act.get('actual_cost', 'N/A')}\n"
             f"  Note: {act.get('notes', '')}\n"
         )
 

@@ -4,11 +4,13 @@ Presenton integration router for AI presentation generation.
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 from app.config.database import get_async_session
 from app.auth.router import fastapi_users
 from app import models
 from app.utils.presenton_client import presenton_client
 from app.utils import azure_blob
+from app.utils.scope_engine import _extract_text_from_files
 from uuid import UUID
 import logging
 import json
@@ -64,9 +66,11 @@ async def generate_with_presenton(
             "message": "Presentation generated successfully"
         }
     """
-    # Load project
+    # Load project with files
     result = await db.execute(
-        select(models.Project).filter(
+        select(models.Project)
+        .options(selectinload(models.Project.files))
+        .filter(
             models.Project.id == project_id,
             models.Project.owner_id == current_user.id
         )
@@ -99,6 +103,25 @@ async def generate_with_presenton(
         logger.error(f"Failed to load scope data: {e}")
         raise HTTPException(status_code=500, detail="Failed to load scope data")
     
+    # Extract original RFP content from project files
+    rfp_text = ""
+    try:
+        input_files = [
+            {"file_path": f.file_path, "file_name": f.file_name}
+            for f in project.files
+            if f.file_name not in ["scope.json", "finalized_scope.json", "questions.json", "architecture.png", "architecture.svg"]
+            and not f.file_name.startswith("architecture_")
+        ]
+        
+        if input_files:
+            rfp_text = await _extract_text_from_files(input_files)
+            logger.info(f"📄 Extracted RFP content: {len(rfp_text)} characters")
+        else:
+            logger.warning("⚠️  No RFP files found for project")
+    except Exception as e:
+        logger.warning(f"Failed to extract RFP content: {e}")
+        # Non-blocking - continue with scope data only
+    
     # Check Presenton availability
     if not await presenton_client.health_check():
         raise HTTPException(
@@ -110,6 +133,7 @@ async def generate_with_presenton(
     try:
         result = await presenton_client.generate_presentation(
             scope_data=scope_data,
+            rfp_text=rfp_text,
             n_slides=n_slides,
             template=template
         )

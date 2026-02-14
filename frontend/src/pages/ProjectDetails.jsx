@@ -150,75 +150,70 @@ export default function ProjectDetails() {
   };
 
   const handleOpenCloseout = () => {
-    if (!finalizedScope?.activities) {
-      alert("Cannot close project without finalized activities.");
+    if (!finalizedScope?.resourcing_plan) {
+      alert("Cannot close project without finalized resourcing plan.");
       return;
     }
 
-    // Build a map of Role -> Monthly Rate from resourcing plan
-    const roleRates = {};
-    if (finalizedScope.resourcing_plan) {
-      finalizedScope.resourcing_plan.forEach(role => {
-        // Ensure we parse the rate as a float
-        const rate = parseFloat(role['Rate/month']) || 2500; // Default fallback
-        roleRates[role.Resources] = rate;
-      });
-    }
-
-    // Initialize actuals from estimates with calculated costs
+    // Initialize actuals from resourcing plan (resource-level)
     const initialActuals = {};
-    finalizedScope.activities.forEach(act => {
-      // 1. Identify all roles involved (Owner + Resources)
-      const owner = act.Owner || '';
-      const resourcesVal = act.Resources || '';
-      const resourceList = resourcesVal.split(',').map(r => r.trim()).filter(r => r);
+    finalizedScope.resourcing_plan.forEach(resource => {
+      const resourceName = resource.Resources;
+      const rate = parseFloat(resource['Rate/month']) || 0;
 
-      const allRoles = [...new Set([owner, ...resourceList].filter(r => r))]; // Unique roles only
+      // Sum up estimated effort across all months
+      const monthColumns = Object.keys(resource).filter(k =>
+        k.startsWith('Month') || k.match(/^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)/)
+      );
+      const totalEstimatedEffort = monthColumns.reduce((sum, month) => {
+        return sum + (parseFloat(resource[month]) || 0);
+      }, 0);
 
-      // 2. Sum up monthly burn rate for this activity
-      // Note: This assumes all listed resources work full-time on this activity for its duration
-      // which is the standard assumption in the scoping engine.
-      let monthlyBurn = 0;
-      allRoles.forEach(r => {
-        monthlyBurn += roleRates[r] || 2500; // Default if role not found
-      });
+      const estimatedCost = (rate * totalEstimatedEffort).toFixed(2);
 
-      // 3. Calculate total estimated cost
-      const durationMonths = parseFloat(act['Effort Months']) || 0;
-      const estimatedCostVal = (monthlyBurn * durationMonths).toFixed(2);
-
-      initialActuals[act.ID] = {
-        name: act['Activities'],
-        estimated_duration: act['Effort Months'] + ' months',
-        actual_duration: act['Effort Months'], // Default to estimate
-        estimated_cost: estimatedCostVal, // Pre-filled calculated cost
-        actual_cost: '', // User to enter
+      initialActuals[resourceName] = {
+        name: resourceName,
+        rate: rate,
+        estimated_effort: totalEstimatedEffort,
+        actual_effort: '', // Empty - force user to enter actual value
+        estimated_cost: estimatedCost,
         notes: ''
       };
     });
+
     setActuals(initialActuals);
     setShowCloseModal(true);
   };
 
+
   const submitCloseout = async () => {
+    const missingActuals = Object.values(actuals).filter(a =>
+      a.actual_effort === '' || a.actual_effort === undefined
+    );
+    if (missingActuals.length > 0) {
+      alert(`Please enter actual effort for all ${missingActuals.length} resources before closing.`);
+      return;
+    }
+
     try {
       setClosing(true);
       const payload = {
-        activities: Object.values(actuals).map(a => ({
-          name: a.name,
-          estimated_duration: a.estimated_duration,
-          actual_duration: a.actual_duration + ' months',
-          estimated_cost: a.estimated_cost || '0',
-          // If actual_cost is empty, use estimated_cost (meaning estimate was accurate)
-          actual_cost: a.actual_cost || a.estimated_cost || '0',
-          notes: a.notes
+        resources: Object.values(actuals).map(r => ({
+          name: r.name,
+          rate_per_month: r.rate,
+          estimated_effort_months: r.estimated_effort,
+          actual_effort_months: parseFloat(r.actual_effort) || 0,
+          estimated_cost: parseFloat(r.estimated_cost) || 0,
+          actual_cost: (r.rate * (parseFloat(r.actual_effort) || 0)), // Auto-calculate
+          notes: r.notes || ''
         }))
       };
 
       await projectApi.closeProject(id, payload);
       setShowCloseModal(false);
       alert("Project Closed Successfully! Actuals have been learned.");
-      // Optionally refresh project status
+      // Refresh project to show closed state
+      setProject(prev => ({ ...prev, status: "closed", closed_at: new Date().toISOString() }));
     } catch (err) {
       console.error("Failed to close project", err);
       alert("Failed to close project. See console.");
@@ -226,6 +221,7 @@ export default function ProjectDetails() {
       setClosing(false);
     }
   };
+
 
   if (!project)
     return (
@@ -239,8 +235,13 @@ export default function ProjectDetails() {
       {/* Project Header */}
       <div className="bg-white dark:bg-dark-surface p-6 rounded-xl shadow-md border border-gray-200 dark:border-dark-muted">
         <div className="flex justify-between items-center mb-4">
-          <h1 className="text-3xl font-bold text-gray-800 dark:text-gray-100">
+          <h1 className="text-3xl font-bold text-gray-800 dark:text-gray-100 flex items-center gap-2">
             {project.name}
+            {project.status === "closed" && (
+              <span className="text-sm px-3 py-1 bg-gray-500 text-white rounded-full">
+                Closed
+              </span>
+            )}
           </h1>
           <button
             onClick={regenerateScope}
@@ -253,10 +254,15 @@ export default function ProjectDetails() {
 
           <button
             onClick={handleOpenCloseout}
-            className="flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-lg shadow hover:bg-emerald-700 transition ml-2"
+            disabled={project.status === "closed"}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg shadow transition ml-2 ${
+              project.status === "closed"
+                ? 'bg-gray-400 text-gray-200 cursor-not-allowed'
+                : 'bg-emerald-600 text-white hover:bg-emerald-700'
+            }`}
           >
             <Archive className="w-5 h-5" />
-            Close Project
+            {project.status === "closed" ? 'Project Closed' : 'Close Project'}
           </button>
         </div>
 
@@ -478,78 +484,71 @@ export default function ProjectDetails() {
 
             <div className="p-6 overflow-y-auto flex-1">
               <p className="mb-4 text-sm text-gray-600 dark:text-gray-300 bg-blue-50 dark:bg-blue-900/20 p-3 rounded-lg border border-blue-100 dark:border-blue-800">
-                ℹ️ <strong>Continuous Learning:</strong> Please enter the <em>Actual</em> duration for each activity.
-                The AI will learn from this to improve future estimates for similar projects.
+                ℹ️ <strong>Continuous Learning:</strong> Please enter the <em>Actual</em> effort (in months) for each resource. <br />
+                <span className="text-xs mt-1 block">
+                  💡 Actual cost is automatically calculated from: Rate × Actual Effort. This data helps improve future estimates!
+                </span>
               </p>
 
+              {/* Resource Details Table */}
+              <h4 className="text-md font-semibold text-gray-800 dark:text-gray-100 mb-3">
+                Resource Utilization
+              </h4>
               <table className="w-full text-sm text-left">
                 <thead className="text-xs text-gray-700 uppercase bg-gray-100 dark:bg-gray-700 dark:text-gray-300">
                   <tr>
-                    <th className="px-4 py-3">Activity</th>
-                    <th className="px-4 py-3">Est. Months</th>
-                    <th className="px-4 py-3 w-32">Actual Months</th>
-                    <th className="px-4 py-3 w-32">Est. Cost ($)</th>
-                    <th className="px-4 py-3 w-32">Actual Cost ($)</th>
+                    <th className="px-4 py-3">Resource</th>
+                    <th className="px-4 py-3">Rate/Month</th>
+                    <th className="px-4 py-3">Est. Effort (months)</th>
+                    <th className="px-4 py-3 w-32">Actual Effort (months)</th>
+                    <th className="px-4 py-3">Est. Cost ($)</th>
+                    <th className="px-4 py-3">Actual Cost ($)</th>
                     <th className="px-4 py-3">Notes (Why different?)</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {Object.keys(actuals).map(key => (
-                    <tr key={key} className="bg-white border-b dark:bg-gray-800 dark:border-gray-700">
-                      <td className="px-4 py-2 font-medium">{actuals[key].name}</td>
-                      <td className="px-4 py-2 text-gray-500">{actuals[key].estimated_duration}</td>
-                      <td className="px-4 py-2">
-                        <input
-                          type="number"
-                          step="0.1"
-                          className="w-full p-1 border rounded"
-                          value={actuals[key].actual_duration}
-                          onChange={(e) => setActuals({
-                            ...actuals,
-                            [key]: { ...actuals[key], actual_duration: e.target.value }
-                          })}
-                        />
-                      </td>
-                      <td className="px-4 py-2">
-                        <input
-                          type="number"
-                          step="1000"
-                          placeholder="50000"
-                          className="w-full p-1 border rounded"
-                          value={actuals[key].estimated_cost}
-                          onChange={(e) => setActuals({
-                            ...actuals,
-                            [key]: { ...actuals[key], estimated_cost: e.target.value }
-                          })}
-                        />
-                      </td>
-                      <td className="px-4 py-2">
-                        <input
-                          type="number"
-                          step="1000"
-                          placeholder="62500"
-                          className="w-full p-1 border rounded"
-                          value={actuals[key].actual_cost}
-                          onChange={(e) => setActuals({
-                            ...actuals,
-                            [key]: { ...actuals[key], actual_cost: e.target.value }
-                          })}
-                        />
-                      </td>
-                      <td className="px-4 py-2">
-                        <input
-                          type="text"
-                          className="w-full p-1 border rounded"
-                          placeholder="Slow API, bugs..."
-                          value={actuals[key].notes}
-                          onChange={(e) => setActuals({
-                            ...actuals,
-                            [key]: { ...actuals[key], notes: e.target.value }
-                          })}
-                        />
-                      </td>
-                    </tr>
-                  ))}
+                  {Object.keys(actuals).map(key => {
+                    const r = actuals[key];
+                    const actualCost = (r.rate * (parseFloat(r.actual_effort) || 0)).toFixed(2);
+
+                    return (
+                      <tr key={key} className="bg-white border-b dark:bg-gray-800 dark:border-gray-700">
+                        <td className="px-4 py-2 font-medium">{r.name}</td>
+                        <td className="px-4 py-2 text-gray-500">${r.rate.toLocaleString()}</td>
+                        <td className="px-4 py-2 text-gray-500">{r.estimated_effort.toFixed(1)}</td>
+                        <td className="px-4 py-2">
+                          <input
+                            type="number"
+                            step="0.1"
+                            min="0"
+                            placeholder="Enter actual months"
+                            className="w-full p-1 border rounded dark:bg-gray-700 dark:border-gray-600"
+                            value={r.actual_effort}
+                            onChange={(e) => setActuals({
+                              ...actuals,
+                              [key]: { ...actuals[key], actual_effort: e.target.value }
+                            })}
+                          />
+                        </td>
+                        <td className="px-4 py-2 text-gray-500">${parseFloat(r.estimated_cost).toLocaleString()}</td>
+                        <td className="px-4 py-2 font-semibold text-green-600">
+                          ${parseFloat(actualCost).toLocaleString()}
+                        </td>
+                        <td className="px-4 py-2">
+                          <input
+                            type="text"
+                            className="w-full p-1 border rounded dark:bg-gray-700 dark:border-gray-600"
+                            placeholder="Additional OAuth work..."
+                            value={r.notes}
+                            onChange={(e) => setActuals({
+                              ...actuals,
+                              [key]: { ...actuals[key], notes: e.target.value }
+                            })}
+                          />
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

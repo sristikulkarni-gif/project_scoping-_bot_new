@@ -76,19 +76,13 @@ class ProjectScopingAgent:
         company_id: str,
         db_session: AsyncSession,
         complexity: Optional[str] = None,
-        use_cases: Optional[str] = None
+        use_cases: Optional[str] = None,
+        duration: Optional[str] = None,
+        closeout_actuals_context: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Generate a comprehensive project scope using agent reasoning.
-        
-        The agent will:
-        1. Analyze the RFP and requirements
-        2. Search for relevant knowledge and case studies
-        3. Get accurate rate cards from database
-        4. Plan team composition based on research
-        5. Calculate costs using real rates
-        6. Verify completeness and accuracy
-        
+
         Args:
             project_name: Name of the project
             domain: Project domain (e.g., "CRM", "E-commerce")
@@ -98,7 +92,9 @@ class ProjectScopingAgent:
             db_session: Database session for queries
             complexity: Optional complexity level
             use_cases: Optional use cases description
-        
+            duration: Optional target duration (e.g. "5 months")
+            closeout_actuals_context: Optional actual resource performance data from project closeout
+
         Returns:
             Dictionary containing complete project scope
         """
@@ -117,19 +113,70 @@ class ProjectScopingAgent:
                 rfp_text=rfp_text,
                 complexity=complexity,
                 use_cases=use_cases,
-                rate_cards=rate_cards_str
+                duration=duration,
+                rate_cards=rate_cards_str,
+                closeout_actuals_context=closeout_actuals_context
             )
             
-            # Call LLM directly with system prompt
-            logger.info("🤖 Agent starting autonomous reasoning...")
+            # Bind tools to LLM
+            llm_with_tools = self.llm.bind_tools(self.tools)
+            
+            logger.info("🤖 Agent starting autonomous reasoning (with tools)...")
             
             messages = [
                 SystemMessage(content=PROJECT_SCOPING_SYSTEM_PROMPT),
                 HumanMessage(content=user_prompt)
             ]
             
-            # Invoke LLM
-            response = await self.llm.ainvoke(messages)
+            # Use LangGraph or simple loop for tool calling
+            # Implementing a simple loop here
+            from langchain_core.messages import ToolMessage
+            
+            # Initial call
+            ai_msg = await llm_with_tools.ainvoke(messages)
+            messages.append(ai_msg)
+            
+            # Tool execution loop (limit to 5 turns to prevent infinite loops)
+            for _ in range(5):
+                if not ai_msg.tool_calls:
+                    break
+                    
+                logger.info(f"🛠️ Agent requested {len(ai_msg.tool_calls)} tool calls")
+                
+                for tool_call in ai_msg.tool_calls:
+                    tool_name = tool_call["name"]
+                    tool_args = tool_call["args"]
+                    tool_id = tool_call["id"]
+                    
+                    logger.info(f"  👉 Calling tool: {tool_name}")
+                    
+                    # Find tool by name
+                    selected_tool = next((t for t in self.tools if t.name == tool_name), None)
+                    
+                    if selected_tool:
+                        try:
+                            # Execute tool
+                            # Note: some tools might be async, others sync. LangChain tools usually implement invoke/ainvoke
+                            if hasattr(selected_tool, 'ainvoke'):
+                                tool_result = await selected_tool.ainvoke(tool_args)
+                            else:
+                                tool_result = selected_tool.invoke(tool_args)
+                                
+                            logger.info(f"  ✅ Tool {tool_name} returned result (len: {len(str(tool_result))})")
+                        except Exception as e:
+                            tool_result = f"Error executing tool {tool_name}: {e}"
+                            logger.error(f"  ❌ Tool execution failed: {e}")
+                    else:
+                        tool_result = f"Error: Tool {tool_name} not found"
+                        
+                    # Append tool result to messages
+                    messages.append(ToolMessage(content=str(tool_result), tool_call_id=tool_id))
+                
+                # Call LLM again with tool results
+                ai_msg = await llm_with_tools.ainvoke(messages)
+                messages.append(ai_msg)
+            
+            response = ai_msg
             
             logger.info("✅ Agent completed reasoning")
             logger.info(f"🔍 Raw Agent Response (first 500 chars): {response.content[:500]}")
@@ -152,7 +199,7 @@ class ProjectScopingAgent:
             }
             
             # Validate scope structure
-            scope_data = self._validate_and_enrich_scope(scope_data, project_name, domain)
+            scope_data = self._validate_and_enrich_scope(scope_data, project_name, domain, duration)
             
             logger.info(f"✅ Scope generated successfully")
             
@@ -170,7 +217,9 @@ class ProjectScopingAgent:
         rfp_text: str,
         complexity: Optional[str],
         use_cases: Optional[str],
-        rate_cards: str
+        duration: Optional[str],
+        rate_cards: str,
+        closeout_actuals_context: Optional[str] = None
     ) -> str:
         """Build the user prompt for the agent."""
         
@@ -187,7 +236,36 @@ class ProjectScopingAgent:
         
         if use_cases:
             prompt += f"- **Use Cases**: {use_cases}\n"
+
+        if duration:
+            prompt += f"- **Target Duration**: {duration}\n"
+            prompt += "  * **IMPORTANT**: If your research (ACTUAL_DATA) suggests this duration is unrealistic, you MUST propose a corrected duration in the 'ai_recommended_duration' field (e.g. '6 months'). Do not be constrained by the target if data proves otherwise.\n"
         
+        from datetime import datetime
+        current_date = datetime.now().strftime("%Y-%m-%d")
+        
+        if closeout_actuals_context:
+            prompt += f"""
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+**🔴 MANDATORY OVERRIDE - ACTUAL DATA FROM PROJECT CLOSEOUT:**
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+This project was PREVIOUSLY COMPLETED. The data below is from REAL execution.
+You MUST use these values. Do NOT use generic estimates. Do NOT ignore this section.
+
+{closeout_actuals_context}
+
+**RULES:**
+1. For each resource listed above, the `total_months` in team_composition MUST equal the ACTUAL effort value
+2. Activity effort_months should be proportionally adjusted to match actual resource utilization
+3. Timeline total_months should reflect the actual project duration (use the max actual effort)
+4. Cost calculations should use: ACTUAL effort × rate_per_month
+5. If actual effort was HIGHER than estimated, your scope MUST reflect the higher value
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+"""
+
         prompt += f"""
 **Available Rate Cards** (use these exact rates for cost calculations):
 ```json
@@ -195,7 +273,7 @@ class ProjectScopingAgent:
 ```
 
 **RFP Document:**
-{rfp_text[:8000]}  
+{rfp_text[:8000]}
 
 **Your Task:**
 
@@ -208,11 +286,16 @@ Please analyze this RFP thoroughly and create a detailed project scope. Follow t
 5. Identify risks and assumptions
 6. Verify your work for completeness and accuracy
 
-Remember to use your tools to gather information and validate your decisions!
+214: **IMPORTANT**: 
+215: - When generating the timeline, use TODAY'S DATE ({current_date}) or a future date as the start_date. NEVER use past dates.
+216: - You MUST respect the **Target Duration** if provided. If the user asks for {duration or 'X months'}, the total timeline MUST match strictly.
+217: 
+218: Remember to use your tools to gather information and validate your decisions!
 
 Return your response as a properly formatted JSON object following the schema in your system instructions.
 """
         
+        logger.info(f"📝 Generated User Prompt:\n{prompt[:500]}...\n(truncated)")
         return prompt
     
     def _extract_json_from_response(self, response_text: str) -> Dict[str, Any]:
@@ -281,7 +364,8 @@ Return your response as a properly formatted JSON object following the schema in
         self,
         scope_data: Dict[str, Any],
         project_name: str,
-        domain: str
+        domain: str,
+        duration: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Validate scope structure and enrich with defaults if needed.
@@ -296,10 +380,18 @@ Return your response as a properly formatted JSON object following the schema in
             }
         
         if 'timeline' not in scope_data:
+            # Parse duration string if available (e.g. "5 months" -> 5)
+            default_months = 6
+            if duration:
+                 import re
+                 match = re.search(r"(\d+(\.\d+)?)", str(duration))
+                 if match:
+                     default_months = float(match.group(1))
+
             scope_data['timeline'] = {
-                "total_months": 6,
+                "total_months": default_months,
                 "start_date": datetime.now().strftime("%Y-%m-%d"),
-                "end_date": (datetime.now() + timedelta(days=180)).strftime("%Y-%m-%d")
+                "end_date": (datetime.now() + timedelta(days=int(default_months * 30))).strftime("%Y-%m-%d")
             }
         
         if 'team_composition' not in scope_data:

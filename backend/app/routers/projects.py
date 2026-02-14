@@ -221,6 +221,13 @@ async def finalize_project_scope(
         raise HTTPException(status_code=404, detail="Project not found")
 
     db_file, cleaned_scope = await scope_engine.finalize_scope(db, db_project.id, scope_data)
+    
+    # Set scope_finalized_at if not already set (tracks project start for timeline)
+    if not db_project.scope_finalized_at:
+        from datetime import datetime
+        db_project.scope_finalized_at = datetime.now()
+        await db.commit()
+    
     return {
         "msg": "Project scope finalized successfully",
         "scope": cleaned_scope,
@@ -293,6 +300,33 @@ async def regenerate_scope_with_instructions(
             draft=draft,
             instructions=instructions,
         )
+
+        # --- EXPLICIT SAVE: Ensure the new scope is persisted ---
+        # 1. Upload to Blob
+        blob_name = f"projects/{project_id}/finalized_scope.json"
+        await azure_blob.upload_bytes(
+            json.dumps(regen_scope, ensure_ascii=False, indent=2).encode("utf-8"),
+            blob_name,
+            overwrite=True
+        )
+
+        # 2. Update ProjectFile record (ensure it exists)
+        result = await db.execute(
+            select(models.ProjectFile).filter(
+                models.ProjectFile.project_id == project_id,
+                models.ProjectFile.file_name == "finalized_scope.json",
+            )
+        )
+        pf = result.scalars().first()
+        if not pf:
+            pf = models.ProjectFile(project_id=project_id, file_name="finalized_scope.json", file_path=blob_name)
+            db.add(pf)
+        else:
+            pf.file_path = blob_name
+            
+        await db.commit()
+        logger.info(f"✅ Explicitly saved regenerated scope to {blob_name}")
+
 
         # Return structured response
         return schemas.GeneratedScopeResponse(
@@ -688,15 +722,20 @@ async def get_related_case_study(
 @router.post("/{project_id}/close", response_model=schemas.MessageResponse)
 async def close_project(
     project_id: uuid.UUID,
-    payload: Dict[str, Any],
+    payload: schemas.ProjectCloseoutRequest,
     db: AsyncSession = Depends(get_async_session),
     current_user: models.User = Depends(get_current_active_user),
 ):
     """
-    Close a project and submit 'Actuals' for continuous learning.
-    This creates a new Knowledge Base entry tagged as 'actual_data'.
+    Close a project and submit resource-level actuals for continuous learning.
+    
+    This endpoint:
+    1. Stores resource actuals in database for reporting
+    2. Vectorizes data in Qdrant for AI learning
+    3. Updates project status to 'closed'
     """
     from app.services import continuous_learning
+    from datetime import datetime, timezone
 
     # Validate project ownership
     db_project = await projects.get_project(db, project_id=project_id, owner_id=current_user.id)
@@ -704,8 +743,41 @@ async def close_project(
         raise HTTPException(status_code=404, detail="Project not found")
 
     try:
-        await continuous_learning.process_project_closeout(project_id, payload, db)
-        return {"msg": "Project closed successfully. Actuals have been ingested for future learning."}
+        # 1. Store resource actuals in database
+        total_actual_cost = 0.0
+        for resource in payload.resources:
+            resource_actual = models.ResourceActual(
+                project_id=project_id,
+                resource_name=resource.name,
+                rate_per_month=resource.rate_per_month,
+                estimated_effort_months=resource.estimated_effort_months,
+                actual_effort_months=resource.actual_effort_months,
+                estimated_cost=resource.estimated_cost,
+                actual_cost=resource.actual_cost,
+                notes=resource.notes
+            )
+            db.add(resource_actual)
+            total_actual_cost += resource.actual_cost
+
+        # 2. Update project status and metadata
+        db_project.status = "closed"
+        db_project.closed_at = datetime.now(timezone.utc)
+        db_project.actual_total_cost = total_actual_cost
+
+        await db.commit()
+        logger.info(f"✅ Stored {len(payload.resources)} resource actuals for project {project_id}")
+
     except Exception as e:
-        logger.error(f"Failed to close project {project_id}: {e}")
+        logger.error(f"Failed to store closeout data for project {project_id}: {e}")
+        await db.rollback()
         raise HTTPException(status_code=500, detail=f"Failed to process project closeout: {str(e)}")
+
+    # 3. Store in Qdrant for AI learning (non-critical — don't fail if this errors)
+    try:
+        payload_dict = {"resources": [r.model_dump() for r in payload.resources]}
+        await continuous_learning.process_project_closeout(project_id, payload_dict, db)
+        logger.info(f"✅ Vectorized closeout data for project {project_id}")
+    except Exception as e:
+        logger.warning(f"⚠️ Qdrant vectorization failed (non-critical): {e}")
+
+    return {"msg": "Project closed successfully. Actuals have been stored for future learning."}

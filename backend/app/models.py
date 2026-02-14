@@ -10,7 +10,6 @@ from fastapi_users.db import SQLAlchemyBaseUserTableUUID
 from app.config.database import Base
 from app.utils import azure_blob
 
-
 # USER MODEL
 class User(SQLAlchemyBaseUserTableUUID, Base):
     __tablename__ = "users"
@@ -126,6 +125,20 @@ class Project(Base):
     updated_at: Mapped[datetime.datetime | None] = mapped_column(
         DateTime(timezone=True), onupdate=func.now()
     )
+    scope_finalized_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    
+    # Project Status and Closeout
+    status: Mapped[str] = mapped_column(
+        String(20), default="draft", server_default="draft", index=True, nullable=False
+    )  # draft, active, closed
+    closed_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    actual_total_cost: Mapped[float | None] = mapped_column(
+        Float, nullable=True
+    )
 
     # Owner
     owner_id: Mapped[uuid.UUID] = mapped_column(
@@ -150,6 +163,12 @@ class Project(Base):
 
     prompt_history: Mapped[list["ProjectPromptHistory"]] = relationship(
         "ProjectPromptHistory",
+        back_populates="project",
+        cascade="all, delete-orphan"
+    )
+    
+    resource_actuals: Mapped[list["ResourceActual"]] = relationship(
+        "ResourceActual",
         back_populates="project",
         cascade="all, delete-orphan"
     )
@@ -225,6 +244,49 @@ class ProjectPromptHistory(Base):
 
     def __repr__(self):
         return f"<PromptHistory(role={self.role}, project={str(self.project_id)[:8]})>"
+
+
+# RESOURCE ACTUAL MODEL
+class ResourceActual(Base):
+    """Track actual resource utilization for closed projects."""
+    __tablename__ = "resource_actuals"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True
+    )
+    
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False
+    )
+    
+    # Resource details
+    resource_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    rate_per_month: Mapped[float] = mapped_column(Float, nullable=False)
+    
+    # Effort tracking
+    estimated_effort_months: Mapped[float] = mapped_column(Float, nullable=False)
+    actual_effort_months: Mapped[float] = mapped_column(Float, nullable=False)
+    
+    # Cost tracking
+    estimated_cost: Mapped[float] = mapped_column(Float, nullable=False)
+    actual_cost: Mapped[float] = mapped_column(Float, nullable=False)
+    
+    # Notes
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    
+    # Timestamp
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    
+    # Relationships
+    project: Mapped["Project"] = relationship("Project", back_populates="resource_actuals")
+    
+    def __repr__(self):
+        return f"<ResourceActual(project={str(self.project_id)[:8]}, resource={self.resource_name})>"
 
 
 @event.listens_for(Project, "after_delete")

@@ -43,6 +43,7 @@ class PresentonClient:
     async def generate_presentation(
         self,
         scope_data: Dict[str, Any],
+        rfp_text: str = "",
         n_slides: int = 10,
         template: str = "general",
         language: str = "English"
@@ -53,6 +54,7 @@ class PresentonClient:
         
         Args:
             scope_data: Project scope dictionary
+            rfp_text: Original RFP/requirements text for full context
             n_slides: Number of slides to generate
             template: Template name (e.g., "general", "business", "tech")
             language: Presentation language
@@ -66,10 +68,11 @@ class PresentonClient:
         Raises:
             Exception: If generation fails
         """
-        # Format scope data as content string
-        content = self._format_scope_for_presenton(scope_data)
+        # Format scope data as content string with RFP context
+        content = self._format_scope_for_presenton(scope_data, rfp_text)
         
         logger.info(f"Generating presentation with Presenton: {n_slides} slides, template={template}")
+        logger.info(f"📊 Content length: {len(content)} chars (RFP: {len(rfp_text)} chars)")
         
         # Create request payload
         payload = {
@@ -132,19 +135,32 @@ class PresentonClient:
             logger.error(f"Presenton generation failed: {e}")
             raise
     
-    def _format_scope_for_presenton(self, scope: Dict[str, Any]) -> str:
+    def _format_scope_for_presenton(self, scope: Dict[str, Any], rfp_text: str = "") -> str:
         """
         Convert project scope JSON to Presenton-friendly text format.
+        Includes original RFP content for full context.
         
         Args:
             scope: Project scope dictionary
+            rfp_text: Original RFP/requirements document text
         
         Returns:
             Formatted text content for Presenton
         """
         lines = []
         
-        # Project overview
+        # ===== SECTION 1: Original RFP Content =====
+        if rfp_text:
+            lines.append("# Original Requirements & Context")
+            lines.append("\n## Source Document")
+            # Limit RFP to reasonable size (first 8000 chars ≈ 2000 words)
+            rfp_preview = rfp_text[:8000]
+            if len(rfp_text) > 8000:
+                rfp_preview += "\n\n[... document continues ...]"
+            lines.append(f"\n{rfp_preview}")
+            lines.append("\n---\n")
+        
+        # ===== SECTION 2: Project Overview =====
         if overview := scope.get("overview"):
             project_name = overview.get("Project Name", "Project Presentation")
             lines.append(f"# {project_name}")
@@ -156,9 +172,26 @@ class PresentonClient:
                 lines.append(f"\n**Domain:** {domain}")
             
             if tech_stack := overview.get("Tech Stack"):
-                lines.append(f"\n**Technology:** {tech_stack}")
+                lines.append(f"\n**Technology Stack:** {tech_stack}")
+            
+            if complexity := overview.get("Complexity"):
+                lines.append(f"\n**Complexity:** {complexity}")
+            
+            if duration := overview.get("Duration"):
+                lines.append(f"\n**Duration:** {duration}")
+            
+            if use_cases := overview.get("Use Cases"):
+                lines.append(f"\n**Use Cases:** {use_cases}")
+            
+            if compliance := overview.get("Compliance"):
+                lines.append(f"\n**Compliance:** {compliance}")
         
-        # Project summary
+        # ===== SECTION 3: Executive Summary =====
+        if exec_summary := scope.get("executive_summary"):
+            lines.append("\n## Executive Summary")
+            lines.append(f"\n{exec_summary}")
+        
+        # ===== SECTION 4: Project Summary =====
         if summary := scope.get("project_summary"):
             lines.append("\n## Project Summary")
             if isinstance(summary, dict):
@@ -168,32 +201,82 @@ class PresentonClient:
             else:
                 lines.append(f"\n{summary}")
         
-        # Activities
+        # ===== SECTION 5: Objectives =====
+        if objectives := scope.get("objectives"):
+            lines.append("\n## Objectives")
+            if isinstance(objectives, list):
+                for obj in objectives:
+                    lines.append(f"- {obj}")
+            else:
+                lines.append(f"\n{objectives}")
+        
+        # ===== SECTION 6: Key Activities =====
         if activities := scope.get("activities"):
-            lines.append("\n## Key Activities")
+            lines.append("\n## Key Activities & Deliverables")
             if isinstance(activities, list):
-                for i, activity in enumerate(activities[:8], 1):  # Top 8 activities
+                for i, activity in enumerate(activities, 1):
                     if isinstance(activity, dict):
                         activity_name = activity.get("Activity", activity.get("activity", ""))
+                        deliverable = activity.get("Deliverable", activity.get("deliverable", ""))
+                        effort = activity.get("Effort (Months)", activity.get("effort", ""))
+                        
                         if activity_name:
-                            lines.append(f"{i}. {activity_name}")
+                            lines.append(f"\n### {i}. {activity_name}")
+                            if deliverable:
+                                lines.append(f"**Deliverable:** {deliverable}")
+                            if effort:
+                                lines.append(f"**Effort:** {effort} months")
                     else:
                         lines.append(f"{i}. {activity}")
         
-        # Resourcing plan
+        # ===== SECTION 7: Team & Resources =====
         if resourcing := scope.get("resourcing_plan"):
             lines.append("\n## Team & Resources")
             if isinstance(resourcing, list):
-                for resource in resourcing[:5]:  # Top 5 resources
+                for resource in resourcing:
                     if isinstance(resource, dict):
                         role = resource.get("Resources", resource.get("role", ""))
+                        effort = resource.get("Effort (Months)", resource.get("effort", ""))
                         if role:
-                            lines.append(f"- {role}")
+                            effort_str = f" ({effort} months)" if effort else ""
+                            lines.append(f"- {role}{effort_str}")
         
-        # Architecture diagram note
+        # ===== SECTION 8: Timeline =====
+        if timeline := scope.get("timeline"):
+            lines.append("\n## Project Timeline")
+            if isinstance(timeline, list):
+                for phase in timeline:
+                    if isinstance(phase, dict):
+                        phase_name = phase.get("Phase", phase.get("phase", ""))
+                        start = phase.get("Start Date", phase.get("start", ""))
+                        end = phase.get("End Date", phase.get("end", ""))
+                        if phase_name:
+                            lines.append(f"\n**{phase_name}**")
+                            if start and end:
+                                lines.append(f"Duration: {start} to {end}")
+        
+        # ===== SECTION 9: Risks & Mitigation =====
+        if risks := scope.get("risks"):
+            lines.append("\n## Risks & Mitigation")
+            if isinstance(risks, list):
+                for risk in risks[:5]:  # Top 5 risks
+                    if isinstance(risk, dict):
+                        risk_desc = risk.get("Risk", risk.get("risk", ""))
+                        mitigation = risk.get("Mitigation", risk.get("mitigation", ""))
+                        if risk_desc:
+                            lines.append(f"\n**Risk:** {risk_desc}")
+                            if mitigation:
+                                lines.append(f"**Mitigation:** {mitigation}")
+        
+        # ===== SECTION 10: Cost Estimate =====
+        if cost := scope.get("total_cost"):
+            lines.append("\n## Cost Estimate")
+            lines.append(f"\n**Total Project Cost:** ${cost:,.2f}" if isinstance(cost, (int, float)) else f"\n**Total Project Cost:** {cost}")
+        
+        # ===== SECTION 11: Architecture =====
         if arch_diagram := scope.get("architecture_diagram"):
-            lines.append("\n## Architecture")
-            lines.append("System architecture diagram available in project files.")
+            lines.append("\n## System Architecture")
+            lines.append("Detailed architecture diagram available in project documentation.")
         
         return "\n".join(lines)
     

@@ -25,26 +25,57 @@ Step 1: Analyze Requirements
 - Note any ambiguities or missing information
 
 Step 2: Research & Context Gathering
-- Search knowledge base for relevant best practices and guidelines
+- **CRITICAL**: Search knowledge base for "ACTUAL_DATA" from similar closed projects
+  * Query format: "{domain} {tech_stack} ACTUAL_DATA closeout"
+  * Look for actual resource utilization, effort variance, and real costs
+  * This data shows how similar projects ACTUALLY performed vs estimates
+- Search for relevant best practices and technical guidelines
 - Find similar case studies to learn from past projects
 - Identify patterns and lessons learned
+
+**USING ACTUAL DATA:**
+- If you find ACTUAL_DATA from closed projects, PRIORITIZE it over generic estimates
+- Pay attention to variance percentages (e.g., "Backend Developer: +25% variance")
+- Adjust your estimates based on real performance data
+- Example: If actuals show Backend Devs took 5 months instead of 4, use 5 months
 
 Step 3: Team Planning
 - Based on research and requirements, determine needed roles
 - Get accurate rate cards from the database (NEVER guess!)
 - Plan realistic team composition
+- **Adjust effort based on actual data if available**
 
 Step 4: Scope Creation
 - Define clear phases and activities
-- Estimate realistic timelines based on case studies
+- Estimate realistic timelines based on **actual data** (if available) or case studies
 - Calculate costs using REAL rates from database
 - Identify risks and assumptions
 
 Step 5: Verification
 - Check if all requirements are covered
 - Verify cost calculations are correct
-- Ensure timeline is realistic
+- Ensure timeline is realistic (especially if adjusted based on actuals)
 - Confirm team composition makes sense
+48: 
+49: **CRITICAL: ACTIVITY NAMING RULES:**
+50: 
+51: You MUST break down work into **FEATURE-BASED**, **GRANULAR** activities.
+52: 
+53: ❌ **FORBIDDEN (Generic Names):**
+54: - "Frontend Development"
+55: - "Backend Development"
+56: - "Database Design"
+57: - "Phase 1 Development"
+58: - "Testing"
+59: 
+60: ✅ **REQUIRED (Specific/Functional Names):**
+61: - "User Authentication UI & Login Logic"
+62: - "Payment Gateway API Integration"
+63: - "Product Catalog Schema Design"
+64: - "Admin Dashboard Charts Implementation"
+65: - "Search & Filter Functionality"
+66: 
+67: **If you generate a generic name like "Frontend Development", you will be PENALIZED. Always specify WHAT is being developed.**
 
 **OUTPUT FORMAT:**
 

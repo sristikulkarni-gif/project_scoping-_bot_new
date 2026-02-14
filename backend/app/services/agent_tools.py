@@ -23,23 +23,10 @@ from app.models import RateCard
 logger = logging.getLogger(__name__)
 
 
-@tool
-def search_knowledge_base(query: str, limit: int = 5) -> str:
+
+def search_knowledge_base_direct(query: str, limit: int = 5) -> str:
     """
-    Search the knowledge base for relevant information.
-    
-    Use this when you need:
-    - Best practices
-    - Technical guidelines
-    - Implementation patterns
-    - Architecture recommendations
-    
-    Args:
-        query: Search query (e.g., "CRM authentication best practices")
-        limit: Maximum number of results to return (default: 5)
-    
-    Returns:
-        String containing relevant knowledge base content
+    Direct function to search knowledge base (bypassing LangChain tool wrapper).
     """
     try:
         logger.info(f"🔍 Agent searching KB: {query}")
@@ -50,11 +37,16 @@ def search_knowledge_base(query: str, limit: int = 5) -> str:
         query_vector = embed_text_azure([query])[0]
         
         # Search Qdrant
-        results = qdrant.search(
+        results = qdrant.query_points(
             collection_name=QDRANT_COLLECTION,
-            query_vector=query_vector,
+            query=query_vector,
             limit=limit
-        )
+        ).points
+        
+        logger.info(f"👉 Search returned {len(results)} results")
+        if results:
+            for i, r in enumerate(results):
+                logger.info(f"  Result {i+1}: score={r.score:.3f}, type={r.payload.get('type')}, file={r.payload.get('file_name')}")
         
         if not results:
             return "No relevant information found in knowledge base."
@@ -75,12 +67,33 @@ Source: {file_name}
         
         formatted_result = "\n\n---\n\n".join(chunks)
         logger.info(f"✅ Found {len(results)} KB results")
+        logger.info(f"📄 Content Preview: {formatted_result[:200]}...")
         
         return formatted_result
         
     except Exception as e:
         logger.error(f"❌ KB search failed: {e}")
         return f"Error searching knowledge base: {str(e)}"
+
+@tool
+def search_knowledge_base(query: str, limit: int = 5) -> str:
+    """
+    Search the knowledge base for relevant information.
+    
+    Use this when you need:
+    - Best practices
+    - Technical guidelines
+    - Implementation patterns
+    - Architecture recommendations
+    
+    Args:
+        query: Search query (e.g., "CRM authentication best practices")
+        limit: Maximum number of results to return (default: 5)
+    
+    Returns:
+        String containing relevant knowledge base content
+    """
+    return search_knowledge_base_direct(query, limit)
 
 
 @tool
@@ -112,11 +125,11 @@ def find_case_studies(domain: str, tech_stack: str = "", limit: int = 3) -> str:
         query_vector = embed_text_azure([query])[0]
         
         # Search case study collection
-        results = qdrant.search(
+        results = qdrant.query_points(
             collection_name=CASE_STUDY_COLLECTION,
-            query_vector=query_vector,
+            query=query_vector,
             limit=limit
-        )
+        ).points
         
         if not results:
             return f"No case studies found for domain: {domain}"

@@ -22,6 +22,7 @@ from app.utils.ai_clients import (
     embed_text_ollama,
     get_azure_client,
 )
+from app.services.agent_tools import get_rate_cards_async, search_knowledge_base_direct
 
 
 logger = logging.getLogger(__name__)
@@ -33,17 +34,21 @@ qdrant = get_qdrant_client()
 
 # Utility function to round effort months to nearest 0.5
 def round_to_half(value: float) -> float:
-    """Round a number to the nearest 0.5 increment with minimum of 0.5.
+    """Round a number to the nearest 0.5 increment, allowing zero.
 
     Examples:
-        0.1 → 0.5 (minimum)
+        0.0 → 0.0 (zero allowed)
+        0.1 → 0.0
+        0.3 → 0.5
         1.3 → 1.5
         3.8 → 4.0
         4.1 → 4.0
         2.26 → 2.5
     """
+    if value == 0:
+        return 0.0  # Allow zero values
     rounded = round(value * 2) / 2
-    return max(0.5, rounded)  # Ensure minimum of 0.5
+    return max(0.5, rounded)  # Minimum 0.5 only for non-zero values
 
 from app.config.config import AZURE_OPENAI_DEPLOYMENT
 
@@ -74,7 +79,7 @@ def ollama_chat(prompt: str, model: str = None, temperature: float = 0.7, format
         return response.choices[0].message.content.strip()
         
     except Exception as e:
-        logger.error(f"❌ Azure OpenAI Chat failed: {e}")
+        logger.error(f" Azure OpenAI Chat failed: {e}")
         return ""
 
 
@@ -152,11 +157,6 @@ def _normalize_activity_fields(act: dict, activity_id: int) -> dict:
         act.get('Activity', '')
     )
 
-    description = (
-        act.get('Description', '') or
-        act.get('description', '') or
-        activity_name  # Fallback to activity name
-    )
 
     owner = (
         act.get('Owner', '') or
@@ -206,7 +206,6 @@ def _normalize_activity_fields(act: dict, activity_id: int) -> dict:
     return {
         "ID": activity_id,
         "Activities": activity_name,
-        "Description": description,
         "Owner": owner,
         "Resources": resources,
         "Start Date": start_date,
@@ -252,7 +251,6 @@ def _normalize_activity_fields(act: dict, activity_id: int) -> dict:
                     normalized_activities.append({
                         "ID": idx,
                         "Activities": act,
-                        "Description": act,
                         "Owner": "Backend Developer",
                         "Resources": "",
                         "Start Date": "",
@@ -268,7 +266,7 @@ def _normalize_activity_fields(act: dict, activity_id: int) -> dict:
 
     # Check if data is wrapped in a "data" key - unwrap it
     if raw.get('data') and isinstance(raw.get('data'), dict):
-        logger.info("🔓 Unwrapping nested 'data' key...")
+        logger.info(" Unwrapping nested 'data' key...")
         raw = raw.get('data')
 
     # Check if it's in nested format (has 'phases' or 'project' at root level, or activities inside)
@@ -327,7 +325,6 @@ def _normalize_activity_fields(act: dict, activity_id: int) -> dict:
                     flat_activity = {
                         "ID": activity_id,
                         "Activities": act,
-                        "Description": act,  # Use same string for description
                         "Owner": "Backend Developer",
                         "Resources": "",
                         "Start Date": "",
@@ -339,7 +336,6 @@ def _normalize_activity_fields(act: dict, activity_id: int) -> dict:
                     flat_activity = {
                         "ID": activity_id,
                         "Activities": act.get('name', '') or act.get('activity', ''),
-                        "Description": act.get('description', ''),
                         "Owner": act.get('owner', '') or act.get('responsible', '') or "Backend Developer",
                         "Resources": ", ".join(act.get('resources', [])) if isinstance(act.get('resources'), list) else act.get('resources', ''),
                         "Start Date": act.get('start_date', '') or act.get('startDate', ''),
@@ -373,7 +369,6 @@ def _normalize_activity_fields(act: dict, activity_id: int) -> dict:
                 flat_activity = {
                     "ID": activity_id,
                     "Activities": act,
-                    "Description": act,
                     "Owner": "Backend Developer",
                     "Resources": "",
                     "Start Date": "",
@@ -384,7 +379,6 @@ def _normalize_activity_fields(act: dict, activity_id: int) -> dict:
                 flat_activity = {
                     "ID": activity_id,
                     "Activities": act.get('name', '') or act.get('activity', ''),
-                    "Description": act.get('description', ''),
                     "Owner": act.get('owner', '') or act.get('responsible', '') or "Backend Developer",
                     "Resources": ", ".join(act.get('resources', [])) if isinstance(act.get('resources'), list) else act.get('resources', ''),
                     "Start Date": act.get('start_date', '') or act.get('startDate', ''),
@@ -638,7 +632,8 @@ def extract_text_from_file(file_bytes_io: BytesIO, file_name: str) -> str:
 
     return content.strip()
 
-
+# used for extracting text from files from blob 
+#  
 async def _extract_text_from_files(files: List[dict]) -> str:
     results: List[str] = []
 
@@ -715,6 +710,9 @@ async def _extract_text_from_files(files: List[dict]) -> str:
 
     return "\n\n".join(results)
 
+# 👉 It converts the user’s query into an embedding,
+# 👉 searches similar document chunks in Qdrant,
+# 👉 and returns the most relevant pieces of knowledge.
 
 def _rag_retrieve(query: str, k: int = 5) -> List[Dict]:
     """
@@ -836,8 +834,8 @@ def _build_scope_prompt(rfp_text: str, kb_chunks: List[str], project=None, quest
         f"Duration (months): {duration or '(infer if missing)'}\n\n"
         "**CRITICAL: Inference Rules for Missing Fields**\n"
         "When Tech Stack, Use Cases, or Compliance are missing, you MUST infer them from the RFP context.\n"
-        "❌ NEVER output 'Not specified in RFP' or 'Not mentioned' - this is UNACCEPTABLE.\n"
-        "✅ ALWAYS make reasonable inferences based on the RFP content.\n\n"
+        "NEVER output 'Not specified in RFP' or 'Not mentioned' - this is UNACCEPTABLE.\n"
+        "ALWAYS make reasonable inferences based on the RFP content.\n\n"
         "**Tech Stack Inference:**\n"
         "- Look for explicit technology mentions (Python, Java, React, AWS, Azure, etc.)\n"
         "- Infer from project type: Web app → React/Node.js, Data Analytics → Python/Spark/SQL, AI/ML → Python/TensorFlow\n"
@@ -867,10 +865,10 @@ def _build_scope_prompt(rfp_text: str, kb_chunks: List[str], project=None, quest
         "Use the RFP/project text as the **primary source** \n"
         "Use questions and answers to clarify ambiguities.\n"
         "but enrich missing fields with the Knowledge Base context (if relevant).\n\n"
-        "⚠️ MANDATORY REQUIREMENT: You MUST generate a complete 'activities' array with at least 8-15 activities.\n"
-        "❌ DO NOT generate empty activities array - this is UNACCEPTABLE.\n"
-        "❌ DO NOT return ONLY metadata without activities - this is a CRITICAL ERROR.\n"
-        "✅ The 'activities' array is THE MOST IMPORTANT part of your response.\n\n"
+        "MANDATORY REQUIREMENT: You MUST generate a complete 'activities' array with at least 8-15 activities.\n"
+        "DO NOT generate empty activities array - this is UNACCEPTABLE.\n"
+        "DO NOT return ONLY metadata without activities - this is a CRITICAL ERROR.\n"
+        "The 'activities' array is THE MOST IMPORTANT part of your response.\n\n"
         "Output schema (YOUR ENTIRE RESPONSE MUST MATCH THIS EXACT FORMAT):\n"
         "{\n"
         '  "overview": {\n'
@@ -886,7 +884,6 @@ def _build_scope_prompt(rfp_text: str, kb_chunks: List[str], project=None, quest
         '    {\n'
         '      "ID": int,\n'
         '      "Activities": string,\n'
-        '      "Description": string | null,\n'
         '      "Owner": string | null,\n'
         '      "Resources": string | null,\n'
         '      "Start Date": "yyyy-mm-dd",\n'
@@ -902,13 +899,24 @@ def _build_scope_prompt(rfp_text: str, kb_chunks: List[str], project=None, quest
         '    "risks_and_mitigation": [{risk: string, mitigation: string}]\n'
         "  }\n"
         "}\n\n"
-        "⚠️ CRITICAL: The 'activities' array MUST contain at least 8-15 detailed activities covering ALL project phases:\n"
+        " CRITICAL: The 'activities' array MUST contain at least 8-15 detailed activities covering ALL project phases:\n"
         "   - Requirements gathering, analysis, and planning activities\n"
         "   - Design and architecture activities\n"
         "   - Development activities (broken down by feature/module)\n"
         "   - Testing activities (unit, integration, UAT)\n"
         "   - Deployment and go-live activities\n"
         "   - Post-deployment support activities\n\n"
+        "**CRITICAL: Activity Naming Rules:**\n"
+        "- Activity names MUST describe WHAT is being built (functionality), NOT WHO builds it (seniority)\n"
+        "- NEVER include seniority levels in activity names: ❌ '(Junior)', '(Senior)', '(Mid-level)'\n"
+        "- Use specific, technical, functional descriptions\n"
+        "- ✅ GOOD: 'Backend Authentication API', 'Frontend User Dashboard', 'Payment Gateway Integration'\n"
+        "- ✅ GOOD: 'Database Schema Design', 'RESTful API Endpoints', 'Admin Panel UI Components'\n"
+        "- ❌ BAD: 'Backend Development (Junior)', 'Frontend Work (Senior)', 'Simple Development Tasks'\n"
+        "- ❌ BAD: 'Development Phase 1', 'Coding Tasks', 'Advanced Features'\n"
+        "- Break down large activities by FEATURE or MODULE, not by developer seniority\n"
+        "- Example: Instead of 'Backend Development' + 'Backend Development (Junior)', use:\n"
+        "  'Backend Core Services & Business Logic' + 'Backend CRUD API Endpoints'\n\n"
         "**Project Summary Guidelines:**\n"
         "- `executive_summary`: 2-3 paragraph high-level summary of project goals, scope, and expected outcomes\n"
         "- `key_deliverables`: List 5-8 major deliverables (e.g., 'Fully functional mobile app', 'REST API with documentation')\n"
@@ -2225,6 +2233,30 @@ async def clean_scope(db: AsyncSession, data: Dict[str, Any], project=None) -> D
     role_month_map: Dict[str, Dict[str, float]] = {}
     role_order: List[str] = []
 
+    # --- Fetch Valid Roles Dynamically from DB ---
+    valid_role_keywords = ["developer", "engineer", "architect", "analyst", "designer", "lead", "manager", "tester", "qa", "owner", "admin", "consultant", "specialist"]
+    try:
+        company_id = getattr(project, "company_id", None)
+        if company_id:
+            logger.info(f"Fetching dynamic roles for company {company_id}...")
+            rate_cards = await get_rate_cards_async(str(company_id), db)
+            if rate_cards:
+                # Add roles from DB to our whitelist
+                db_roles = [r.lower() for r in rate_cards.keys()]
+                # Extract unique keywords from DB roles (e.g. "Backend Developer" -> "backend", "developer")
+                # Or just add the full role names? 
+                # Better to keep the keyword approach for flexibility (e.g. "Senior Backend Developer" matches "developer")
+                # But we can also add the full strings to be safe.
+                for r in db_roles:
+                   parts = r.split()
+                   valid_role_keywords.extend(parts)
+                
+                # Deduplicate
+                valid_role_keywords = list(set(valid_role_keywords))
+                logger.info(f"✅ Dynamic Role Whitelist: {len(valid_role_keywords)} keywords")
+    except Exception as e:
+        logger.warning(f"⚠️ Failed to fetch dynamic roles, using defaults: {e}")
+
     # --- Helper: compute monthly allocation based on actual days in month ---
     def month_effort(s: datetime, e: datetime) -> Dict[str, float]:
         cur = s
@@ -2261,6 +2293,16 @@ async def clean_scope(db: AsyncSession, data: Dict[str, Any], project=None) -> D
                 target_months = float(match.group(1))
                 
         # 2. Calculate current inferred duration from activities
+        # Check if AI explicitly recommended a different duration based on actuals
+        ai_duration_str = str(data.get("ai_recommended_duration", "")).lower().strip()
+        if ai_duration_str:
+            ai_match = re.search(r"(\d+(\.\d+)?)", ai_duration_str)
+            if ai_match:
+                ai_months = float(ai_match.group(1))
+                if ai_months > 0 and abs(ai_months - target_months) > 0.5:
+                     logger.info(f"🤖 AI recommended duration {ai_months} differs from target {target_months}. Respecting AI (Actual Data).")
+                     target_months = ai_months
+
         if target_months > 0 and data.get("activities"):
             temp_starts = []
             temp_ends = []
@@ -2295,8 +2337,11 @@ async def clean_scope(db: AsyncSession, data: Dict[str, Any], project=None) -> D
                 current_months = current_days / 30.0
                 
                 # 3. Check if rescaling is needed (allow 10% tolerance)
-                if current_months > 0 and abs(current_months - target_months) / max(current_months, 1.0) > 0.1:
-                    logger.info(f"⚖️ Rescaling project schedule: {current_months:.2f} months -> {target_months:.2f} months")
+                diff = abs(current_months - target_months)
+                logger.info(f"⚖️ Duration Check: User wants {target_months} months, Scope is {current_months:.2f} months. Diff: {diff:.2f}")
+
+                if current_months > 0 and diff / max(current_months, 1.0) > 0.1:
+                    logger.info(f"⚡ RESCALING TRIGGERED: {current_months:.2f} -> {target_months:.2f} (Ratio: {target_months/current_months:.4f})")
                     ratio = target_months / current_months
                     
                     # Apply scaling
@@ -2323,15 +2368,54 @@ async def clean_scope(db: AsyncSession, data: Dict[str, Any], project=None) -> D
     except Exception as e:
         logger.warning(f"⚠️ Failed to rescale project duration: {e}")
 
+    # --- Build list of activity names to filter out from Resources ---
+    activity_names = set()
+    for a in data.get("activities") or []:
+        activity_name = a.get("Activities", "").strip()
+        if activity_name:
+            activity_names.add(activity_name)
+
     # --- Process activities ---
     for idx, a in enumerate(data.get("activities") or [], start=1):
         owner = a.get("Owner") or "Unassigned"
 
         # Parse dependencies
-        raw_deps = [d.strip() for d in str(a.get("Resources") or "").split(",") if d.strip()]
+        raw_deps_list = [d.strip() for d in str(a.get("Resources") or "").split(",") if d.strip()]
 
         # Remove owner from resources if duplicated
-        raw_deps = [r for r in raw_deps if r.lower() != owner.lower()]
+        raw_deps_list = [r for r in raw_deps_list if r.lower() != owner.lower()]
+
+        # Strict filtering for Activity Breakdown (matches Resource Plan logic)
+        
+        # Use the dynamic whitelist we fetched at the start of the function
+        # valid_role_keywords is already populated with DB roles + defaults
+        
+        raw_deps = []
+        for r in raw_deps_list:
+            r_clean = r.strip()
+            r_lower = r_clean.lower()
+            
+            # 1. Component/Activity name filter
+            if r_clean in activity_names:
+                continue
+            
+            # 2. Length check: Too short or too long
+            if len(r_clean) < 3 or len(r_clean) > 35:
+                continue
+                
+            # 3. Parentheses filter
+            if "(" in r_clean or ")" in r_clean:
+                continue
+                
+            # 4. STRICT WHITELIST: Must contain at least one valid role keyword
+            if not any(keyword in r_lower for keyword in valid_role_keywords):
+                continue
+                
+             # 5. Final Sanity Check
+            if r_lower in ["system", "implementation", "design", "testing", "analysis", "tasks"]:
+                 continue
+
+            raw_deps.append(r_clean)
 
         # Owner always included, then other resources
         roles = [owner] + raw_deps
@@ -2351,10 +2435,41 @@ async def clean_scope(db: AsyncSession, data: Dict[str, Any], project=None) -> D
                 role_month_map[role][m] = role_month_map[role].get(m, 0.0) + eff
 
         dur_days = max(1, (e - s).days)
+
+        # Clean up activity name: remove seniority indicators
+        activity_name = _safe_str(a.get("Activities"))
+        # Remove common seniority markers (case-insensitive)
+        # Remove common seniority markers (case-insensitive)
+        activity_name = re.sub(r'\s*\((Junior|Senior|Mid-?level|Lead)\)\s*', '', activity_name, flags=re.IGNORECASE)
+        activity_name = re.sub(r'\s*\-(Junior|Senior|Mid-?level|Lead)\s*', '', activity_name, flags=re.IGNORECASE)
+        activity_name = activity_name.strip()
+
+        # --- NEW: Fix Vague Activity Names ---
+        # If activity is too generic, append context
+        generic_terms = ["frontend development", "backend development", "full stack development", "development", "implementation", "testing", "qa", "design"]
+        if activity_name.lower() in generic_terms:
+            # Try to add context from phase or tech stack
+            # For now, just append "Implementation" or "Execution" to make it slightly better, 
+            # but ideally the specific feature name should be used. 
+            # We can also append the Tech Stack if available in the overview to make it specific e.g. "React Frontend Development"
+            
+            tech_context = ""
+            if "frontend" in activity_name.lower():
+                tech_context = "UI/UX "
+            elif "backend" in activity_name.lower():
+                tech_context = "API & Logic "
+            elif "database" in activity_name.lower():
+                tech_context = "Schema "
+            
+            activity_name = f"{tech_context}{activity_name} - Feature Implementation"
+        
+        # Ensure it's not just "Phase 1" etc
+        if re.match(r'^Phase \d+$', activity_name, re.IGNORECASE):
+             activity_name = f"{activity_name} Implementation"
+
         activities.append({
             "ID": idx,
-            "Activities": _safe_str(a.get("Activities")),
-            "Description": _safe_str(a.get("Description")),
+            "Activities": activity_name,
             "Owner": owner,
             "Resources": ", ".join(raw_deps),
             "Start Date": s,
@@ -2408,9 +2523,40 @@ async def clean_scope(db: AsyncSession, data: Dict[str, Any], project=None) -> D
         if e < s:
             e = s + timedelta(days=30)
 
-        involved_roles = [act.get("Owner") or "Unassigned"] + [
-            r.strip() for r in str(act.get("Resources") or "").split(",") if r.strip()
-        ]
+        # Parse resources and filter out activity names
+        # Parse resources and filter out activity names
+        # Strict filtering to prevent pollution
+        raw_resources = [r.strip() for r in str(act.get("Resources") or "").split(",") if r.strip()]
+        resources_list = []
+        
+        # Strict filtering with Whitelist + Blacklist
+        # We only want REAL roles like "Backend Developer", "QA Engineer"
+        # We use the dynamic whitelist "valid_role_keywords" from the top of the function
+        
+        for r in raw_resources:
+            r_clean = r.strip()
+            r_lower = r_clean.lower()
+            
+            # 1. Length check: Too short or too long
+            if len(r_clean) < 3 or len(r_clean) > 35:
+                continue
+            
+            # 2. Activity / Description check (parentheses)
+            if "(" in r_clean or ")" in r_clean:
+                continue
+                
+            # 3. STRICT WHITELIST: Must contain at least one valid role keyword
+            # This kills "System", "Implementation", "imps", "rigs" instantly
+            if not any(keyword in r_lower for keyword in valid_role_keywords):
+                continue
+             
+            # 4. Final Sanity Check: specific garbage terms that might sneak in
+            if r_lower in ["system", "implementation", "design", "testing", "analysis", "tasks"]:
+                 continue
+
+            resources_list.append(r_clean)
+
+        involved_roles = [act.get("Owner") or "Unassigned"] + resources_list
 
         for m_idx in range(total_months):
             rel_start = min_start + timedelta(days=m_idx * 30)
@@ -2565,16 +2711,23 @@ def _transform_agent_output_to_scope_format(agent_scope: dict, project) -> dict:
     
     # Convert agent activities to legacy format
     # Agent activities have: name, phase, effort_months, assigned_role, dependencies
-    # Legacy format needs: Activities, Description, Owner, Resources, Start Date, End Date, Effort Months
+    # Legacy format needs: Activities, Owner, Resources, Start Date, End Date, Effort Months
     
     activities = []
     start_date = datetime.now()
     
     if timeline.get("start_date"):
         try:
-            start_date = datetime.fromisoformat(timeline["start_date"].replace("Z", "+00:00"))
-        except:
-            pass
+            parsed_start = datetime.fromisoformat(timeline["start_date"].replace("Z", "+00:00"))
+            # Ensure start date is not in the past
+            if parsed_start.date() >= datetime.now().date():
+                start_date = parsed_start
+            else:
+                logger.warning(f"⚠️ AI generated past start date ({parsed_start.date()}), using today instead")
+                start_date = datetime.now()
+        except Exception as e:
+            logger.warning(f"⚠️ Failed to parse start_date: {e}, using today")
+            start_date = datetime.now()
     
     current_date = start_date
     
@@ -2594,7 +2747,6 @@ def _transform_agent_output_to_scope_format(agent_scope: dict, project) -> dict:
         activity = {
             "ID": idx,
             "Activities": act.get("name", f"Activity {idx}"),
-            "Description": act.get("description", act.get("name", "")),
             "Owner": act.get("assigned_role", "Project Manager"),
             "Resources": resources_str,
             "Start Date": current_date.strftime("%Y-%m-%d"),
@@ -2614,24 +2766,34 @@ def _transform_agent_output_to_scope_format(agent_scope: dict, project) -> dict:
             duration_months = phase.get("duration_months", 1)
             duration_days = int(duration_months * 30)
             end_date = current_date + timedelta(days=duration_days)
-            
-            phase_activities = phase.get("activities", [])
-            activity_desc = "; ".join(phase_activities[:3]) if phase_activities else phase.get("name", "")
-            
+
             activity = {
                 "ID": idx,
                 "Activities": phase.get("name", f"Phase {idx}"),
-                "Description": activity_desc,
                 "Owner": "Project Manager",
                 "Resources": "Team",
                 "Start Date": current_date.strftime("%Y-%m-%d"),
                 "End Date": end_date.strftime("%Y-%m-%d"),
                 "Effort Months": duration_months
             }
-            
+
             activities.append(activity)
             current_date = end_date
-    
+
+    # Calculate actual project duration from activities
+    if activities:
+        first_start = datetime.strptime(activities[0]["Start Date"], "%Y-%m-%d")
+        last_end = datetime.strptime(activities[-1]["End Date"], "%Y-%m-%d")
+        actual_duration_days = (last_end - first_start).days
+        actual_duration_months = round(actual_duration_days / 30.0, 1)
+
+        # Update overview with actual calculated duration
+        overview["Duration"] = f"{actual_duration_months} months"
+        overview["Start Date"] = activities[0]["Start Date"]
+        overview["End Date"] = activities[-1]["End Date"]
+
+        logger.info(f"📅 Timeline calculated: {activities[0]['Start Date']} to {activities[-1]['End Date']} ({actual_duration_months} months)")
+
     # Build final scope structure
     scope = {
         "overview": overview,
@@ -2641,9 +2803,77 @@ def _transform_agent_output_to_scope_format(agent_scope: dict, project) -> dict:
             "key_deliverables": project_overview.get("key_deliverables", [])
         }
     }
-    
+
     return scope
 
+
+
+def _apply_closeout_actuals_to_scope(scope: dict, resource_actuals) -> dict:
+    """
+    Post-process a generated scope to override the resourcing plan
+    with actual effort/cost data from a previous closeout.
+    This ensures regenerated scopes reflect real-world performance.
+    """
+    logger.info(f"🔴 _apply_closeout_actuals_to_scope called with {len(resource_actuals)} actuals")
+    resourcing_plan = scope.get("resourcing_plan", [])
+    if not resourcing_plan or not resource_actuals:
+        logger.warning(f"🔴 SKIPPING closeout override: resourcing_plan={len(resourcing_plan)}, resource_actuals={len(resource_actuals) if resource_actuals else 0}")
+        return scope
+
+    # Build lookup: resource_name -> actual data
+    actuals_map = {}
+    for ra in resource_actuals:
+        key = ra.resource_name.strip().lower()
+        actuals_map[key] = ra
+        logger.info(f"🔴 Actuals map key: '{key}' -> actual_effort={ra.actual_effort_months}")
+
+    total_cost = 0.0
+    max_effort = 0.0
+
+    for plan_entry in resourcing_plan:
+        resource_name = plan_entry.get("Resources", "").strip()
+        lookup_key = resource_name.lower()
+        ra = actuals_map.get(lookup_key)
+        logger.info(f"🔴 Plan entry: '{resource_name}' (lookup='{lookup_key}'), match={'YES' if ra else 'NO'}, current_effort={plan_entry.get('Efforts', 0)}")
+
+        if ra:
+            old_effort = plan_entry.get("Efforts", 0)
+            actual_effort = ra.actual_effort_months
+            rate = plan_entry.get("Rate/month", ra.rate_per_month)
+
+            # Scale monthly allocations proportionally
+            if old_effort > 0 and actual_effort != old_effort:
+                scale_factor = actual_effort / old_effort
+                for key in list(plan_entry.keys()):
+                    if key not in ("ID", "Resources", "Rate/month", "Efforts", "Cost"):
+                        # These are month columns (e.g., "Feb 2026", "Mar 2026")
+                        old_val = plan_entry[key]
+                        if isinstance(old_val, (int, float)):
+                            plan_entry[key] = round(old_val * scale_factor * 2) / 2  # Round to 0.5
+
+            plan_entry["Efforts"] = actual_effort
+            plan_entry["Cost"] = round(actual_effort * rate, 2)
+
+            logger.info(f"Closeout override: {resource_name} effort {old_effort} -> {actual_effort} months")
+
+        total_cost += plan_entry.get("Cost", 0)
+        max_effort = max(max_effort, plan_entry.get("Efforts", 0))
+
+    # Update overview duration if actuals imply longer project
+    overview = scope.get("overview", {})
+    old_duration_str = str(overview.get("Duration", ""))
+    old_duration_match = re.search(r"(\d+(\.\d+)?)", old_duration_str)
+    old_duration = float(old_duration_match.group(1)) if old_duration_match else 0
+
+    if max_effort > old_duration:
+        overview["Duration"] = f"{max_effort} months"
+        logger.info(f"Closeout override: Duration {old_duration} -> {max_effort} months")
+
+    scope["resourcing_plan"] = resourcing_plan
+    scope["overview"] = overview
+
+    logger.info(f"Applied closeout actuals: total_cost=${total_cost:,.2f}, max_effort={max_effort}")
+    return scope
 
 
 async def generate_project_scope(db: AsyncSession, project) -> dict:
@@ -2813,16 +3043,74 @@ Generate activities with realistic start/end dates, proper role assignments, and
         logger.warning(f"⚠️ Could not fetch rate card roles: {e}")
         rate_card_roles = list(ROLE_RATE_MAP.keys())
 
+    # ---------- Load closeout actuals from DB (if project was previously closed) ----------
+    closeout_actuals_context = None
+    is_closed = False
+    resource_actuals = []
+    try:
+        project_status = getattr(project, "status", None) or "draft"
+        project_closed_at = getattr(project, "closed_at", None)
+        is_closed = (project_status == "closed") or (project_closed_at is not None)
+        logger.info(f"Project {project.id} status={project_status}, closed_at={project_closed_at}, is_closed={is_closed}")
+
+        if is_closed:
+            from app.models import ResourceActual
+            ra_result = await db.execute(
+                select(ResourceActual).where(ResourceActual.project_id == project.id)
+            )
+            ra_orm_objects = ra_result.scalars().all()
+            logger.info(f"Found {len(ra_orm_objects)} resource actuals for project {project.id}")
+
+            # Convert ORM objects to plain dicts immediately to avoid session expiry issues
+            for ra_orm in ra_orm_objects:
+                ra_dict = type('ResourceActualData', (), {
+                    'resource_name': ra_orm.resource_name,
+                    'rate_per_month': ra_orm.rate_per_month,
+                    'estimated_effort_months': ra_orm.estimated_effort_months,
+                    'actual_effort_months': ra_orm.actual_effort_months,
+                    'estimated_cost': ra_orm.estimated_cost,
+                    'actual_cost': ra_orm.actual_cost,
+                    'notes': ra_orm.notes,
+                })()
+                resource_actuals.append(ra_dict)
+                logger.info(f"🔴 Loaded actual: {ra_dict.resource_name} -> actual_effort={ra_dict.actual_effort_months}")
+
+            if resource_actuals:
+                actuals_lines = [
+                    "ACTUAL PERFORMANCE DATA FROM PREVIOUS CLOSEOUT:",
+                    "This project was previously executed and closed out with real measurements.",
+                    "You MUST use these ACTUAL effort values when generating the resourcing plan.",
+                    ""
+                ]
+                for ra in resource_actuals:
+                    variance = ((ra.actual_effort_months - ra.estimated_effort_months) / ra.estimated_effort_months * 100) if ra.estimated_effort_months > 0 else 0
+                    actuals_lines.append(f"Resource: {ra.resource_name}")
+                    actuals_lines.append(f"  Rate: ${ra.rate_per_month:,.0f}/month")
+                    actuals_lines.append(f"  Estimated Effort: {ra.estimated_effort_months} months")
+                    actuals_lines.append(f"  ACTUAL Effort: {ra.actual_effort_months} months ({variance:+.1f}% variance) - USE THIS VALUE")
+                    actuals_lines.append(f"  Estimated Cost: ${ra.estimated_cost:,.0f}")
+                    actuals_lines.append(f"  ACTUAL Cost: ${ra.actual_cost:,.0f}")
+                    if ra.notes:
+                        actuals_lines.append(f"  Notes: {ra.notes}")
+                    actuals_lines.append("")
+
+                actuals_lines.append("INSTRUCTION: When generating the resourcing plan, use the ACTUAL effort months for each resource listed above.")
+                actuals_lines.append("For activities involving these resources, set Effort Months based on the actual effort data.")
+                closeout_actuals_context = "\n".join(actuals_lines)
+                logger.info(f"Loaded {len(resource_actuals)} resource actuals for project {project.id}")
+    except Exception as e:
+        logger.warning(f"Could not load closeout actuals: {e}")
+
     # ---------- Build + query with AI AGENT ----------
     try:
         # Import agent service
         from app.services.agent_service import get_scoping_agent
-        
+
         logger.info(f"🤖 Using AI Agent for intelligent scope generation...")
-        
+
         # Get the agent
         agent = get_scoping_agent()
-        
+
         # Prepare project information for agent
         project_name = getattr(project, "name", "Untitled Project")
         domain = getattr(project, "domain", "") or "General"
@@ -2830,12 +3118,14 @@ Generate activities with realistic start/end dates, proper role assignments, and
         complexity = getattr(project, "complexity", None)
         use_cases = getattr(project, "use_cases", None)
         company_id = str(getattr(project, "company_id", ""))
-        
+
         # Use RFP text or fallback
         final_rfp_text = rfp_text or fallback_text
-        
+
         # Call agent to generate scope
         logger.info(f"🚀 Agent starting autonomous reasoning for project: {project_name}")
+        duration = str(getattr(project, "duration", "") or "").strip()
+
         agent_scope = await agent.generate_scope(
             project_name=project_name,
             domain=domain,
@@ -2844,7 +3134,9 @@ Generate activities with realistic start/end dates, proper role assignments, and
             company_id=company_id,
             db_session=db,
             complexity=complexity,
-            use_cases=use_cases
+            use_cases=use_cases,
+            duration=duration,
+            closeout_actuals_context=closeout_actuals_context
         )
         
         logger.info(f"✅ Agent completed scope generation")
@@ -2862,7 +3154,19 @@ Generate activities with realistic start/end dates, proper role assignments, and
         
         # Clean and format the scope
         cleaned_scope = await clean_scope(db, raw, project=project)
-        
+
+        # Post-process: Override resourcing plan with closeout actuals
+        logger.info(f"🔴 POST-PROCESS CHECK: is_closed={is_closed}, resource_actuals count={len(resource_actuals)}")
+        if is_closed and resource_actuals:
+            logger.info(f"🔴 APPLYING closeout actuals override to resourcing plan")
+            try:
+                cleaned_scope = _apply_closeout_actuals_to_scope(cleaned_scope, resource_actuals)
+                logger.info(f"🔴 Successfully applied closeout actuals override")
+            except Exception as e:
+                logger.error(f"🔴 EXCEPTION in _apply_closeout_actuals_to_scope: {e}", exc_info=True)
+        else:
+            logger.warning(f"🔴 SKIPPED closeout override: is_closed={is_closed}, resource_actuals={len(resource_actuals)}")
+
         # Update project fields from generated overview
         overview = cleaned_scope.get("overview", {})
         if overview:
@@ -2950,7 +3254,35 @@ async def regenerate_from_instructions(
 
     if not instructions or not instructions.strip():
         cleaned = await clean_scope(db, draft, project=project)
+        # Apply closeout actuals even without instructions
+        try:
+            project_status = getattr(project, "status", None) or "draft"
+            project_closed_at = getattr(project, "closed_at", None)
+            is_closed = (project_status == "closed") or (project_closed_at is not None)
+            if is_closed:
+                from app.models import ResourceActual
+                ra_result = await db.execute(
+                    select(ResourceActual).where(ResourceActual.project_id == project.id)
+                )
+                resource_actuals = ra_result.scalars().all()
+                if resource_actuals:
+                    cleaned = _apply_closeout_actuals_to_scope(cleaned, resource_actuals)
+                    logger.info(f"🔴 [regenerate-no-instructions] Applied closeout actuals override")
+        except Exception as e:
+            logger.warning(f"Could not apply closeout actuals: {e}")
         return {**cleaned, "_finalized": True}
+
+
+    # === RAG INTEGRATION ===
+    # Retrieve latest ACTUAL_DATA to validate the plan
+    actual_data_context = ""
+    try:
+        # Search specifically for actuals in the same domain/tech
+        rag_query = f"ACTUAL_DATA for {project.domain} {project.tech_stack} project closeout"
+        logger.info(f"🔍 Regenerate Scope: Searching KB for '{rag_query}'")
+        actual_data_context = search_knowledge_base_direct(rag_query, limit=3)
+    except Exception as e:
+        logger.warning(f"Failed to retrieve KB context for regeneration: {e}")
 
 
     prompt = f"""
@@ -2959,9 +3291,13 @@ You are an **expert AI project planner and delivery architect** responsible for 
 You are given:
 1. The current draft project scope (JSON with keys: `overview`, `activities`, `resourcing_plan`).
 2. The user’s latest change instructions.
+3. **LEARNINGS FROM SIMILAR PROJECTS (ACTUAL DATA)**:
+{actual_data_context}
 
 Your task:
-- **Understand** the user’s intent (instructions may be in natural language).
+- **Understand** the user’s intent.
+- **Review content against Actual Data**: If the draft estimates (duration/cost) are significantly lower than the `ACTUAL_DATA` provided, and the user hasn't explicitly asked for a low estimate, you should **ADJUST** the plan closer to reality.
+- **Cite your sources**: If you use the Actual Data to adjust the plan, you MUST add a sentence to the `overview["objective"]` or `overview["goals"]` stating: "Incorporated learnings from similar closed projects (Actual Duration: X months)."
 - **Regenerate** the scope accordingly:
   - Apply all user instructions faithfully.
   - Preserve structure and realism of the plan.
@@ -2974,7 +3310,7 @@ Your task:
 
 ####  Schema
 - Preserve the same top-level keys: `overview`, `activities`, `resourcing_plan`.
-- Every activity must have: "ID", "Activities", "Description", "Owner", "Resources",
+- Every activity must have: "ID", "Activities", "Owner", "Resources",
 - "Start Date", "End Date", "Effort Months"
 - Use valid ISO dates (`yyyy-mm-dd`).
 - Keep total duration ≤ 12 months.
@@ -2985,7 +3321,6 @@ CORRECT activity example:
 {{
   "ID": 1,
   "Activities": "Project Initiation and Requirements Gathering",
-  "Description": "Define project scope, gather requirements, create initial documentation",
   "Owner": "Project Manager",
   "Resources": "Business Analyst, Data Architect",
   "Start Date": "2025-01-15",
@@ -2999,7 +3334,6 @@ WRONG activity example (DO NOT DO THIS):
 {{
   "ID": 1,
   "Activities": "Project Manager",  ← WRONG! This is a role name, not an activity!
-  "Description": "",  ← WRONG! Must have meaningful description!
   "Owner": "Unassigned",  ← WRONG! Must have a real owner!
   "Resources": "",
   "Start Date": "2025-01-15",
@@ -3150,7 +3484,7 @@ Return only the updated JSON.
 
         if updated_scope.get('activities'):
             unassigned_count = sum(1 for act in updated_scope['activities'] if act.get('Owner', '').lower() in ['unassigned', ''])
-            empty_desc_count = sum(1 for act in updated_scope['activities'] if not act.get('Description', '').strip())
+
 
             # Check if activity names are just role names (common LLM mistake)
             common_roles = ['project manager', 'business analyst', 'data architect', 'data engineer',
@@ -3313,6 +3647,27 @@ Return only the updated JSON.
     except Exception as e:
         logger.error(f" Creative regeneration failed: {e}")
         cleaned = await clean_scope(db, draft, project=project)
+
+    # ---- Apply closeout actuals override (same as generate_project_scope) ----
+    try:
+        project_status = getattr(project, "status", None) or "draft"
+        project_closed_at = getattr(project, "closed_at", None)
+        is_closed = (project_status == "closed") or (project_closed_at is not None)
+        logger.info(f"🔴 [regenerate] Project {project.id} status={project_status}, is_closed={is_closed}")
+
+        if is_closed:
+            from app.models import ResourceActual
+            ra_result = await db.execute(
+                select(ResourceActual).where(ResourceActual.project_id == project.id)
+            )
+            resource_actuals = ra_result.scalars().all()
+            logger.info(f"🔴 [regenerate] Found {len(resource_actuals)} resource actuals")
+
+            if resource_actuals:
+                cleaned = _apply_closeout_actuals_to_scope(cleaned, resource_actuals)
+                logger.info(f"🔴 [regenerate] Applied closeout actuals override")
+    except Exception as e:
+        logger.warning(f"🔴 [regenerate] Could not apply closeout actuals: {e}")
 
     # ---- Update project metadata from overview ----
     overview = cleaned.get("overview", {})

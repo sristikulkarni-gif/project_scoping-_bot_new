@@ -30,23 +30,56 @@ async def process_project_closeout(
 
     # 2. Construct the 'Learning Document'
     # This text format is optimized for retrieval by the Scoping Engine
+    
+    # Automatic Timeline Tracking (Option 1)
+    # Start Date: When scope was finalized (or created_at fallback)
+    # End Date: Now (when closeout is happening)
+    
+    start_dt = project.scope_finalized_at or project.created_at
+    end_dt = datetime.datetime.now(datetime.timezone.utc)
+    
+    project_start_date = start_dt.strftime("%Y-%m-%d") if start_dt else "N/A"
+    project_end_date = end_dt.strftime("%Y-%m-%d")
+    
     learning_text = (
         f"PROJECT CLOSEOUT REPORT: {project.name}\n"
         f"TYPE: ACTUAL_DATA\n"
         f"INDUSTRY: {project.domain}\n"
-        f"COMPLEXITY: {project.complexity}\n\n"
-        f"DESCRIPTION:\n{project.description if hasattr(project, 'description') else 'N/A'}\n\n"
-        f"ACTUAL RESULTS (VS ESTIMATES):\n"
+        f"COMPLEXITY: {project.complexity}\n"
+        f"TECH STACK: {project.tech_stack}\n\n"
+        f"PROJECT TIMELINE:\n"
+        f"ACTUAL START DATE: {project_start_date}\n"
+        f"ACTUAL END DATE: {project_end_date}\n\n"
+        f"RESOURCE UTILIZATION (ACTUAL VS ESTIMATED):\n"
     )
 
-    for act in actuals.get("activities", []):
+    # Calculate max actual effort for implied duration hint
+    max_act_effort = 0.0
+    for r in actuals.get("resources", []):
+        val = r.get('actual_effort_months', 0)
+        if val > max_act_effort:
+            max_act_effort = val
+            
+    if max_act_effort > 0:
+        # Safer injection: insert before RESOURCE UTILIZATION header
+        split_marker = "RESOURCE UTILIZATION (ACTUAL VS ESTIMATED):\n"
+        if split_marker in learning_text:
+            learning_text = learning_text.replace(split_marker, f"IMPLIED DURATION (MAX RESOURCE EFFORT): {max_act_effort} months\n\n{split_marker}")
+
+    # Process resource-level actuals
+    for resource in actuals.get("resources", []):
+        est_effort = resource.get('estimated_effort_months', 0)
+        act_effort = resource.get('actual_effort_months', 0)
+        variance = ((act_effort - est_effort) / est_effort * 100) if est_effort > 0 else 0
+        
         learning_text += (
-            f"- Activity: {act['name']}\n"
-            f"  Estimated Duration: {act.get('estimated_duration', 'N/A')}\n"
-            f"  ACTUAL DURATION: {act['actual_duration']}\n"
-            f"  Estimated Cost: ${act.get('estimated_cost', 'N/A')}\n"
-            f"  ACTUAL COST: ${act.get('actual_cost', 'N/A')}\n"
-            f"  Note: {act.get('notes', '')}\n"
+            f"- Resource: {resource['name']}\n"
+            f"  Rate: ${resource.get('rate_per_month', 0)}/month\n"
+            f"  Estimated Effort: {est_effort} months\n"
+            f"  ACTUAL EFFORT: {act_effort} months ({variance:+.1f}% variance)\n"
+            f"  Estimated Cost: ${resource.get('estimated_cost', 0)}\n"
+            f"  ACTUAL COST: ${resource.get('actual_cost', 0)}\n"
+            f"  Notes: {resource.get('notes', 'N/A')}\n\n"
         )
 
     # 3. Create a Knowledge Base Entry associated with this memory

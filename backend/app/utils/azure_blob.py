@@ -93,7 +93,7 @@ async def download_text(blob_name: str, base: str = "", encoding: str = "utf-8")
     return raw.decode(encoding, errors="ignore")
 
 
-# Listing
+# Listing ( tree structure of the blob )
 async def list_bases() -> List[Dict]:
     return [
         {"name": "projects", "path": "projects", "is_folder": True},

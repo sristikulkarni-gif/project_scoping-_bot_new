@@ -208,7 +208,8 @@ const AccuracyDashboard = () => {
                                 <th>Domain</th>
                                 <th>Complexity</th>
                                 <th>Est. Duration</th>
-                                <th>Actual Duration</th>
+                                <th title="Calendar duration from project start to end dates">Actual Duration</th>
+                                <th title="Total person-months (sum of all activity durations)">Total Effort</th>
                                 <th>Est. Cost</th>
                                 <th>Actual Cost</th>
                                 <th>Duration Accuracy</th>
@@ -228,6 +229,7 @@ const AccuracyDashboard = () => {
                                     </td>
                                     <td>{project.estimated_duration || 'N/A'}</td>
                                     <td>{project.actual_duration}</td>
+                                    <td><span style={{ color: '#6366f1', fontWeight: '500' }}>{project.total_effort || 'N/A'}</span></td>
                                     <td>{project.estimated_cost || 'N/A'}</td>
                                     <td>{project.actual_cost || 'N/A'}</td>
                                     <td>

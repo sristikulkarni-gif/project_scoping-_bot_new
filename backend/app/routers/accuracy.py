@@ -439,9 +439,39 @@ async def get_project_accuracy_breakdown(
                 accuracy_info = _calculate_accuracy_from_closeout(closeout_content)
                 
                 # Extract actual duration from closeout text
+                # Try to get calendar duration from project-level dates first
+                start_date_pattern = r"ACTUAL START DATE:\s*(\d{4}-\d{2}-\d{2})"
+                end_date_pattern = r"ACTUAL END DATE:\s*(\d{4}-\d{2}-\d{2})"
+                
+                start_match = re.search(start_date_pattern, closeout_content, re.IGNORECASE)
+                end_match = re.search(end_date_pattern, closeout_content, re.IGNORECASE)
+                
+                calendar_duration = None
+                if start_match and end_match:
+                    try:
+                        from datetime import datetime
+                        start_date = datetime.strptime(start_match.group(1), "%Y-%m-%d")
+                        end_date = datetime.strptime(end_match.group(1), "%Y-%m-%d")
+                        days_diff = (end_date - start_date).days
+                        calendar_duration = round(days_diff / 30.0, 1)  # Convert to months
+                    except Exception as e:
+                        logger.warning(f"Failed to parse project dates: {e}")
+                
+                # Calculate total effort (sum of activity durations)
                 act_pattern = r"ACTUAL DURATION:\s*([\d.]+)\s*months?"
                 act_matches = re.findall(act_pattern, closeout_content, re.IGNORECASE)
-                actual_duration = f"{act_matches[0]} months" if act_matches else "N/A"
+                
+                total_effort = 0
+                if act_matches:
+                    total_effort = sum(float(duration) for duration in act_matches)
+                
+                # Use calendar duration if available, otherwise fall back to total effort
+                if calendar_duration is not None:
+                    actual_duration = f"{calendar_duration} months"
+                elif total_effort > 0:
+                    actual_duration = f"{total_effort} months"
+                else:
+                    actual_duration = "N/A"
                 
                 # Extract cost values from closeout (these override scope estimates)
                 estimated_cost = accuracy_info.get("total_estimated_cost", 0)
@@ -458,7 +488,8 @@ async def get_project_accuracy_breakdown(
                     "complexity": project.complexity,
                     "created_at": project.created_at.isoformat() if project.created_at else None,
                     "estimated_duration": project.duration,
-                    "actual_duration": actual_duration,
+                    "actual_duration": actual_duration,  # Calendar duration from dates
+                    "total_effort": f"{total_effort} months" if total_effort > 0 else "N/A",  # Sum of activities
                     "duration_accuracy": accuracy_info["duration_accuracy"],
                     "estimated_cost": f"${estimated_cost:,.2f}" if estimated_cost > 0 else "N/A",
                     "actual_cost": f"${actual_cost:,.2f}" if actual_cost > 0 else "N/A",
@@ -476,6 +507,7 @@ async def get_project_accuracy_breakdown(
                     "created_at": project.created_at.isoformat() if project.created_at else None,
                     "estimated_duration": project.duration,
                     "actual_duration": "N/A",
+                    "total_effort": "N/A",
                     "duration_accuracy": 0.0,
                     "estimated_cost": f"${estimated_cost_from_scope:,.2f}" if estimated_cost_from_scope > 0 else "N/A",
                     "actual_cost": "N/A",

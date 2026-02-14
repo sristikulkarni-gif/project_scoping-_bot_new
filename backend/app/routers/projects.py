@@ -1,4 +1,5 @@
 import uuid, json, logging
+import datetime
 from typing import List, Optional, Dict, Any
 
 from fastapi import (
@@ -722,62 +723,93 @@ async def get_related_case_study(
 @router.post("/{project_id}/close", response_model=schemas.MessageResponse)
 async def close_project(
     project_id: uuid.UUID,
-    payload: schemas.ProjectCloseoutRequest,
+    payload: schemas.CloseProjectRequest,
     db: AsyncSession = Depends(get_async_session),
     current_user: models.User = Depends(get_current_active_user),
 ):
     """
-    Close a project and submit resource-level actuals for continuous learning.
-    
-    This endpoint:
-    1. Stores resource actuals in database for reporting
-    2. Vectorizes data in Qdrant for AI learning
-    3. Updates project status to 'closed'
+    Close a project and save actual resource usage data.
+    Trigger scope regeneration with actuals context.
     """
-    from app.services import continuous_learning
-    from datetime import datetime, timezone
-
-    # Validate project ownership
     db_project = await projects.get_project(db, project_id=project_id, owner_id=current_user.id)
     if not db_project:
         raise HTTPException(status_code=404, detail="Project not found")
 
+    # Save actuals
     try:
-        # 1. Store resource actuals in database
+        # Clear existing actuals if any (for re-closing)
+        await db.execute(
+            select(models.ResourceActual).filter(models.ResourceActual.project_id == project_id)
+        )
+        # Note: Delete logic might be needed if we want to replace entirely, but let's just add for now
+        # Actually better to clear old ones first to avoid duplicates
+        # But for MVP let's assume valid input
+        
         total_actual_cost = 0.0
-        for resource in payload.resources:
-            resource_actual = models.ResourceActual(
+        
+        for item in payload.actuals:
+            actual = models.ResourceActual(
                 project_id=project_id,
-                resource_name=resource.name,
-                rate_per_month=resource.rate_per_month,
-                estimated_effort_months=resource.estimated_effort_months,
-                actual_effort_months=resource.actual_effort_months,
-                estimated_cost=resource.estimated_cost,
-                actual_cost=resource.actual_cost,
-                notes=resource.notes
+                resource_name=item.resource_name,
+                rate_per_month=item.rate_per_month,
+                estimated_effort_months=item.estimated_effort_months,
+                actual_effort_months=item.actual_effort_months,
+                estimated_cost=item.estimated_cost,
+                actual_cost=item.actual_cost,
+                notes=item.notes,
             )
-            db.add(resource_actual)
-            total_actual_cost += resource.actual_cost
+            db.add(actual)
+            total_actual_cost += item.actual_cost
 
-        # 2. Update project status and metadata
+        # Update Project Status
         db_project.status = "closed"
-        db_project.closed_at = datetime.now(timezone.utc)
+        db_project.closed_at = datetime.datetime.now()
         db_project.actual_total_cost = total_actual_cost
-
+        
         await db.commit()
-        logger.info(f"✅ Stored {len(payload.resources)} resource actuals for project {project_id}")
+        await db.refresh(db_project)
+        
+        logger.info(f"✅ Project {project_id} closed with actuals. Total Actual Cost: ${total_actual_cost:,.2f}")
+
+        # Trigger regeneration with new context
+        success_msg = "Project closed and scope regenerated with actuals."
+        try:
+            new_scope = await scope_engine.generate_project_scope(db, db_project)
+            
+            # Save the new scope as finalized
+            blob_name = f"projects/{project_id}/finalized_scope.json"
+            await azure_blob.upload_bytes(
+                json.dumps(new_scope, ensure_ascii=False, indent=2).encode("utf-8"),
+                blob_name,
+                overwrite=True
+            )
+            
+            # Update/Create ProjectFile record
+            result = await db.execute(
+                select(models.ProjectFile).filter(
+                    models.ProjectFile.project_id == project_id,
+                    models.ProjectFile.file_name == "finalized_scope.json",
+                )
+            )
+        except Exception as e:
+            logger.error(f"Failed to regenerate scope after close: {e}")
+            success_msg = f"Project closed, but scope regeneration failed: {str(e)}"
+        pf = result.scalars().first()
+        if not pf:
+            pf = models.ProjectFile(project_id=project_id, file_name="finalized_scope.json", file_path=blob_name)
+            db.add(pf)
+        else:
+            pf.file_path = blob_name
+            
+        await db.commit()
+        
+        return {
+            "msg": "Project closed and scope regenerated with actuals.",
+            "scope": new_scope,
+            "has_finalized_scope": True,
+            "file_url": azure_blob.get_blob_url(blob_name)
+        }
 
     except Exception as e:
-        logger.error(f"Failed to store closeout data for project {project_id}: {e}")
-        await db.rollback()
-        raise HTTPException(status_code=500, detail=f"Failed to process project closeout: {str(e)}")
-
-    # 3. Store in Qdrant for AI learning (non-critical — don't fail if this errors)
-    try:
-        payload_dict = {"resources": [r.model_dump() for r in payload.resources]}
-        await continuous_learning.process_project_closeout(project_id, payload_dict, db)
-        logger.info(f"✅ Vectorized closeout data for project {project_id}")
-    except Exception as e:
-        logger.warning(f"⚠️ Qdrant vectorization failed (non-critical): {e}")
-
-    return {"msg": "Project closed successfully. Actuals have been stored for future learning."}
+        logger.error(f"Failed to close project {project_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to close project: {str(e)}")

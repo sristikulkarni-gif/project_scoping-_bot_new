@@ -212,17 +212,18 @@ class StatusResponse(BaseModel):
 
 
 # CLOSEOUT SCHEMAS
-class ResourceActualCreate(BaseModel):
-    """Schema for resource actual data during closeout."""
-    name: str = Field(..., min_length=1, max_length=100)
-    rate_per_month: float = Field(..., gt=0)
-    estimated_effort_months: float = Field(..., ge=0)
-    actual_effort_months: float = Field(..., ge=0)
-    estimated_cost: float = Field(..., ge=0)
-    actual_cost: float = Field(..., ge=0)
-    notes: Optional[str] = Field(None, max_length=1000)
+class ResourceActualInput(BaseModel):
+    resource_name: str
+    rate_per_month: float
+    estimated_effort_months: float
+    actual_effort_months: float
+    estimated_cost: float
+    actual_cost: float
+    notes: Optional[str] = None
 
 
-class ProjectCloseoutRequest(BaseModel):
-    """Schema for project closeout payload."""
-    resources: List[ResourceActualCreate] = Field(..., min_items=1)
+class CloseProjectRequest(BaseModel):
+    actuals: List[ResourceActualInput]
+
+
+

@@ -87,6 +87,180 @@ const DiagramModal = ({ src, onClose }) => {
   );
 };
 
+/**
+ * Modal to close project and input actuals
+ */
+const CloseoutModal = ({ isOpen, onClose, project, initialResources, onReset }) => {
+  const [actuals, setActuals] = useState([]);
+  const [submitting, setSubmitting] = useState(false);
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    if (isOpen && initialResources) {
+      console.log("Initial Resources for Closeout:", initialResources);
+      // Initialize actuals from the finalized resourcing plan
+      // Group by Role to avoid duplicates if same role appears multiple times?
+      // Usually resourcing plan has unique roles.
+      const initialData = initialResources.map(r => ({
+        resource_name: r.Resources || r.Role || r.role_name || r.role || "Unknown",
+        rate_per_month: parseFloat(r["Rate/month"] || r.Rate || r.monthly_rate || r.rate || 0),
+        estimated_effort_months: parseFloat(r.Efforts || r["Effort Months"] || r.estimated_effort || r.effort_months || 0),
+        actual_effort_months: parseFloat(r.Efforts || r["Effort Months"] || r.estimated_effort || r.effort_months || 0),
+        estimated_cost: parseFloat(r.Cost || r.estimated_cost || r.cost || 0),
+        actual_cost: parseFloat(r.Cost || r.estimated_cost || r.cost || 0),
+        notes: ""
+      }));
+      setActuals(initialData);
+    }
+  }, [isOpen, initialResources]);
+
+  const handleChange = (index, field, value) => {
+    const newActuals = [...actuals];
+    newActuals[index][field] = value;
+
+    // Auto-calculate cost if effort changes
+    if (field === "actual_effort_months") {
+      const effort = parseFloat(value) || 0;
+      const rate = newActuals[index].rate_per_month;
+      newActuals[index].actual_cost = effort * rate;
+    }
+
+    setActuals(newActuals);
+  };
+
+  const handleSubmit = async () => {
+    try {
+      setSubmitting(true);
+      const payload = { actuals };
+      const res = await projectApi.closeProject(project.id, payload);
+
+      // Close modal
+      onClose();
+
+      // Navigate to exports with new scope
+      if (res.data?.scope) {
+        navigate(`/exports/${project.id}`, { state: { draftScope: res.data.scope } });
+      } else {
+        // Just refresh
+        onReset();
+      }
+
+    } catch (err) {
+      console.error("Failed to close project:", err);
+      alert("Failed to close project. See console for details.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4 backdrop-blur-sm">
+      <div className="bg-white dark:bg-dark-surface w-full max-w-4xl rounded-xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+        <div className="p-6 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center bg-gray-50 dark:bg-gray-800">
+          <div>
+            <h2 className="text-xl font-semibold text-gray-800 dark:text-gray-100">Close Project & Log Actuals</h2>
+            <p className="text-sm text-gray-500 dark:text-gray-400">Enter actual effort values to regenerate the scope with real data.</p>
+          </div>
+          <button onClick={onClose} className="p-2 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-full transition">
+            <X className="w-5 h-5 text-gray-500" />
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-auto p-6">
+          <table className="min-w-full text-sm text-left">
+            <thead className="text-xs text-gray-700 uppercase bg-gray-100 dark:bg-gray-700 dark:text-gray-200">
+              <tr>
+                <th className="px-4 py-3 rounded-tl-lg">Resource / Role</th>
+                <th className="px-4 py-3">Rate / Mo</th>
+                <th className="px-4 py-3">Est. Effort</th>
+                <th className="px-4 py-3 bg-blue-50 dark:bg-blue-900/20 border-b-2 border-blue-500">ACTUAL Effort (Months)</th>
+                <th className="px-4 py-3">Est. Cost</th>
+                <th className="px-4 py-3 font-semibold">ACTUAL Cost</th>
+                <th className="px-4 py-3 rounded-tr-lg">Notes</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
+              {actuals.map((item, idx) => (
+                <tr key={idx} className="hover:bg-gray-50 dark:hover:bg-gray-800 transition">
+                  <td className="px-4 py-3 font-medium text-gray-900 dark:text-white">
+                    {item.resource_name}
+                  </td>
+                  <td className="px-4 py-3 text-gray-500">
+                    ${item.rate_per_month.toLocaleString()}
+                  </td>
+                  <td className="px-4 py-3 text-gray-500">
+                    {item.estimated_effort_months} m
+                  </td>
+                  <td className="px-4 py-3 bg-blue-50 dark:bg-blue-900/10">
+                    <input
+                      type="number"
+                      step="0.1"
+                      min="0"
+                      value={item.actual_effort_months}
+                      onChange={(e) => handleChange(idx, "actual_effort_months", e.target.value)}
+                      className="w-full px-2 py-1 rounded border border-blue-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white font-bold text-blue-700 dark:text-blue-300"
+                    />
+                  </td>
+                  <td className="px-4 py-3 text-gray-500">
+                    ${item.estimated_cost.toLocaleString()}
+                  </td>
+                  <td className="px-4 py-3 font-bold text-gray-800 dark:text-gray-200">
+                    ${item.actual_cost.toLocaleString()}
+                  </td>
+                  <td className="px-4 py-3">
+                    <input
+                      type="text"
+                      placeholder="Optional notes..."
+                      value={item.notes}
+                      onChange={(e) => handleChange(idx, "notes", e.target.value)}
+                      className="w-full px-2 py-1 text-xs rounded border border-gray-300 focus:ring-1 focus:ring-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                    />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+
+          {actuals.length === 0 && (
+            <div className="text-center py-10 text-gray-500">
+              <p>No resources found in the finalized scope.</p>
+              <p className="text-xs mt-2">Generate a scope first to track actuals.</p>
+            </div>
+          )}
+        </div>
+
+        <div className="p-6 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 flex justify-end gap-3 rounded-b-xl">
+          <button
+            onClick={onClose}
+            className="px-4 py-2 text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 focus:ring-4 focus:ring-gray-200 dark:bg-gray-800 dark:text-gray-400 dark:border-gray-600 dark:hover:bg-gray-700"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleSubmit}
+            disabled={submitting || actuals.length === 0}
+            className="px-4 py-2 text-white bg-blue-600 rounded-lg hover:bg-blue-700 focus:ring-4 focus:ring-blue-300 disabled:opacity-50 flex items-center gap-2 shadow-lg shadow-blue-500/30"
+          >
+            {submitting ? (
+              <>
+                <RefreshCw className="w-4 h-4 animate-spin" />
+                Closing...
+              </>
+            ) : (
+              <>
+                <Archive className="w-4 h-4" />
+                Confirm Closeout
+              </>
+            )}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 export default function ProjectDetails() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -95,12 +269,8 @@ export default function ProjectDetails() {
   const [loading, setLoading] = useState(false);
   const [finalizedScope, setFinalizedScope] = useState(null);
   const [scopeLoading, setScopeLoading] = useState(false);
-
-  // Closeout State
-  const [showCloseModal, setShowCloseModal] = useState(false);
-  const [actuals, setActuals] = useState({});
-  const [closing, setClosing] = useState(false);
   const [isImageModalOpen, setIsImageModalOpen] = useState(false);
+  const [isCloseoutModalOpen, setIsCloseoutModalOpen] = useState(false);
 
   useEffect(() => {
     const loadProject = async () => {
@@ -149,79 +319,6 @@ export default function ProjectDetails() {
     }
   };
 
-  const handleOpenCloseout = () => {
-    if (!finalizedScope?.resourcing_plan) {
-      alert("Cannot close project without finalized resourcing plan.");
-      return;
-    }
-
-    // Initialize actuals from resourcing plan (resource-level)
-    const initialActuals = {};
-    finalizedScope.resourcing_plan.forEach(resource => {
-      const resourceName = resource.Resources;
-      const rate = parseFloat(resource['Rate/month']) || 0;
-
-      // Sum up estimated effort across all months
-      const monthColumns = Object.keys(resource).filter(k =>
-        k.startsWith('Month') || k.match(/^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)/)
-      );
-      const totalEstimatedEffort = monthColumns.reduce((sum, month) => {
-        return sum + (parseFloat(resource[month]) || 0);
-      }, 0);
-
-      const estimatedCost = (rate * totalEstimatedEffort).toFixed(2);
-
-      initialActuals[resourceName] = {
-        name: resourceName,
-        rate: rate,
-        estimated_effort: totalEstimatedEffort,
-        actual_effort: '', // Empty - force user to enter actual value
-        estimated_cost: estimatedCost,
-        notes: ''
-      };
-    });
-
-    setActuals(initialActuals);
-    setShowCloseModal(true);
-  };
-
-
-  const submitCloseout = async () => {
-    const missingActuals = Object.values(actuals).filter(a =>
-      a.actual_effort === '' || a.actual_effort === undefined
-    );
-    if (missingActuals.length > 0) {
-      alert(`Please enter actual effort for all ${missingActuals.length} resources before closing.`);
-      return;
-    }
-
-    try {
-      setClosing(true);
-      const payload = {
-        resources: Object.values(actuals).map(r => ({
-          name: r.name,
-          rate_per_month: r.rate,
-          estimated_effort_months: r.estimated_effort,
-          actual_effort_months: parseFloat(r.actual_effort) || 0,
-          estimated_cost: parseFloat(r.estimated_cost) || 0,
-          actual_cost: (r.rate * (parseFloat(r.actual_effort) || 0)), // Auto-calculate
-          notes: r.notes || ''
-        }))
-      };
-
-      await projectApi.closeProject(id, payload);
-      setShowCloseModal(false);
-      alert("Project Closed Successfully! Actuals have been learned.");
-      // Refresh project to show closed state
-      setProject(prev => ({ ...prev, status: "closed", closed_at: new Date().toISOString() }));
-    } catch (err) {
-      console.error("Failed to close project", err);
-      alert("Failed to close project. See console.");
-    } finally {
-      setClosing(false);
-    }
-  };
-
 
   if (!project)
     return (
@@ -243,27 +340,29 @@ export default function ProjectDetails() {
               </span>
             )}
           </h1>
-          <button
-            onClick={regenerateScope}
-            disabled={loading}
-            className="flex items-center gap-2 px-4 py-2 bg-primary text-white rounded-lg shadow hover:bg-secondary transition disabled:opacity-50"
-          >
-            <RefreshCw className={`w-5 h-5 ${loading ? "animate-spin" : ""}`} />
-            {loading ? "Regenerating..." : "Regenerate Scope"}
-          </button>
 
-          <button
-            onClick={handleOpenCloseout}
-            disabled={project.status === "closed"}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg shadow transition ml-2 ${
-              project.status === "closed"
-                ? 'bg-gray-400 text-gray-200 cursor-not-allowed'
-                : 'bg-emerald-600 text-white hover:bg-emerald-700'
-            }`}
-          >
-            <Archive className="w-5 h-5" />
-            {project.status === "closed" ? 'Project Closed' : 'Close Project'}
-          </button>
+          <div className="flex gap-3">
+            {project.status !== "closed" && finalizedScope && (
+              <button
+                onClick={() => setIsCloseoutModalOpen(true)}
+                className="flex items-center gap-2 px-4 py-2 bg-white text-gray-700 border border-gray-300 rounded-lg shadow-sm hover:bg-gray-50 transition"
+                title="Close Project & Log Actuals"
+              >
+                <Archive className="w-4 h-4" />
+                Close Project
+              </button>
+            )}
+
+            <button
+              onClick={regenerateScope}
+              disabled={loading}
+              className="flex items-center gap-2 px-4 py-2 bg-primary text-white rounded-lg shadow hover:bg-secondary transition disabled:opacity-50"
+            >
+              <RefreshCw className={`w-5 h-5 ${loading ? "animate-spin" : ""}`} />
+              {loading ? "Regenerating..." : "Regenerate Scope"}
+            </button>
+          </div>
+
         </div>
 
         <div className="grid md:grid-cols-2 gap-4 text-gray-700 dark:text-gray-300">
@@ -272,7 +371,12 @@ export default function ProjectDetails() {
           <p><strong>Tech Stack:</strong> {project.tech_stack || "-"}</p>
           <p><strong>Use Cases:</strong> {project.use_cases || "-"}</p>
           <p><strong>Compliance:</strong> {project.compliance || "-"}</p>
-          <p><strong>Duration:</strong> {project.duration || "-"}</p>
+          <p><strong>Duration:</strong> {finalizedScope?.overview?.Duration || project.duration || "-"}</p>
+          {project.status === "closed" && project.actual_total_cost > 0 && (
+            <p className="font-bold text-green-600">
+              <strong>Actual Cost:</strong> ${project.actual_total_cost.toLocaleString()}
+            </p>
+          )}
         </div>
       </div>
 
@@ -317,262 +421,176 @@ export default function ProjectDetails() {
       </div>
 
       {/* Architecture Diagram */}
-      {scopeLoading ? (
-        <div className="bg-white dark:bg-dark-surface p-6 rounded-xl shadow-md border border-gray-200 dark:border-dark-muted">
-          <h2 className="text-xl font-semibold mb-4 text-gray-800 dark:text-gray-100">
-            Architecture Diagram
-          </h2>
-          <p className="text-gray-500 dark:text-gray-400">Loading...</p>
-        </div>
-      ) : finalizedScope?.architecture_diagram ? (
-        <div className="bg-white dark:bg-dark-surface p-6 rounded-xl shadow-md border border-gray-200 dark:border-dark-muted">
-          <h2 className="text-xl font-semibold mb-4 text-gray-800 dark:text-gray-100">
-            Architecture Diagram
-          </h2>
-          <div className="flex flex-col items-center justify-center p-4">
-            <div
-              className="relative group cursor-zoom-in w-full flex justify-center bg-gray-50 dark:bg-gray-800 rounded-lg shadow-lg border border-gray-300 dark:border-gray-600 p-2 overflow-auto"
-              onClick={() => setIsImageModalOpen(true)}
-            >
-              <img
-                src={`${import.meta.env.VITE_API_URL || 'http://localhost:8000'}/api/blobs/download/${finalizedScope.architecture_diagram?.replace('.png', '.svg')}?base=projects`}
-                alt="Architecture Diagram"
-                className="max-w-full max-h-[600px] w-auto h-auto object-contain transition-transform duration-300 group-hover:scale-[1.01]"
-                onError={(e) => {
-                  const currentSrc = e.target.src;
-                  if (currentSrc.includes('.svg')) {
-                    // If SVG fails, try PNG (fallback)
-                    e.target.src = currentSrc.replace('.svg', '.png');
-                  } else {
-                    // If both fail, show placeholder
-                    e.target.onerror = null;
-                    e.target.src = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300"><rect width="400" height="300" fill="%23f3f4f6"/><text x="50%" y="50%" text-anchor="middle" fill="%236b7280" font-family="Arial" font-size="16">Image not available</text></svg>';
-                  }
-                }}
-              />
-              <div className="absolute bottom-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                <span className="bg-black/75 text-white text-xs px-2 py-1 rounded shadow-sm">Click to expand</span>
+      {
+        scopeLoading ? (
+          <div className="bg-white dark:bg-dark-surface p-6 rounded-xl shadow-md border border-gray-200 dark:border-dark-muted">
+            <h2 className="text-xl font-semibold mb-4 text-gray-800 dark:text-gray-100">
+              Architecture Diagram
+            </h2>
+            <p className="text-gray-500 dark:text-gray-400">Loading...</p>
+          </div>
+        ) : finalizedScope?.architecture_diagram ? (
+          <div className="bg-white dark:bg-dark-surface p-6 rounded-xl shadow-md border border-gray-200 dark:border-dark-muted">
+            <h2 className="text-xl font-semibold mb-4 text-gray-800 dark:text-gray-100">
+              Architecture Diagram
+            </h2>
+            <div className="flex flex-col items-center justify-center p-4">
+              <div
+                className="relative group cursor-zoom-in w-full flex justify-center bg-gray-50 dark:bg-gray-800 rounded-lg shadow-lg border border-gray-300 dark:border-gray-600 p-2 overflow-auto"
+                onClick={() => setIsImageModalOpen(true)}
+              >
+                <img
+                  src={`${import.meta.env.VITE_API_URL || 'http://localhost:8000'}/api/blobs/download/${finalizedScope.architecture_diagram?.replace('.png', '.svg')}?base=projects`}
+                  alt="Architecture Diagram"
+                  className="max-w-full max-h-[600px] w-auto h-auto object-contain transition-transform duration-300 group-hover:scale-[1.01]"
+                  onError={(e) => {
+                    const currentSrc = e.target.src;
+                    if (currentSrc.includes('.svg')) {
+                      // If SVG fails, try PNG (fallback)
+                      e.target.src = currentSrc.replace('.svg', '.png');
+                    } else {
+                      // If both fail, show placeholder
+                      e.target.onerror = null;
+                      e.target.src = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300"><rect width="400" height="300" fill="%23f3f4f6"/><text x="50%" y="50%" text-anchor="middle" fill="%236b7280" font-family="Arial" font-size="16">Image not available</text></svg>';
+                    }
+                  }}
+                />
+                <div className="absolute bottom-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <span className="bg-black/75 text-white text-xs px-2 py-1 rounded shadow-sm">Click to expand</span>
+                </div>
               </div>
             </div>
           </div>
-        </div>
-      ) : null}
+        ) : null
+      }
 
       {/* Project Summary */}
-      {scopeLoading ? (
-        <div className="bg-white dark:bg-dark-surface p-6 rounded-xl shadow-md border border-gray-200 dark:border-dark-muted">
-          <h2 className="text-xl font-semibold mb-4 text-gray-800 dark:text-gray-100">
-            Project Summary
-          </h2>
-          <p className="text-gray-500 dark:text-gray-400">Loading...</p>
-        </div>
-      ) : finalizedScope?.project_summary ? (
-        <div className="bg-white dark:bg-dark-surface p-6 rounded-xl shadow-md border border-gray-200 dark:border-dark-muted">
-          <h2 className="text-xl font-semibold mb-4 text-gray-800 dark:text-gray-100">
-            Project Summary
-          </h2>
-          <div className="space-y-4">
-            {/* Executive Summary */}
-            {finalizedScope.project_summary.executive_summary && (
-              <div>
-                <h3 className="text-lg font-medium text-gray-700 dark:text-gray-300 mb-2">
-                  Executive Summary
-                </h3>
-                <p className="text-gray-600 dark:text-gray-400">
-                  {finalizedScope.project_summary.executive_summary}
-                </p>
-              </div>
-            )}
-
-            {/* Key Deliverables */}
-            {finalizedScope.project_summary.key_deliverables &&
-              Array.isArray(finalizedScope.project_summary.key_deliverables) &&
-              finalizedScope.project_summary.key_deliverables.length > 0 && (
-                <div>
-                  <h3 className="text-lg font-medium text-gray-700 dark:text-gray-300 mb-2">
-                    Key Deliverables
-                  </h3>
-                  <ul className="list-disc list-inside space-y-1 ml-4">
-                    {finalizedScope.project_summary.key_deliverables.map((item, idx) => (
-                      <li key={idx} className="text-gray-600 dark:text-gray-400">
-                        {item}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-
-            {/* Success Criteria */}
-            {finalizedScope.project_summary.success_criteria &&
-              Array.isArray(finalizedScope.project_summary.success_criteria) &&
-              finalizedScope.project_summary.success_criteria.length > 0 && (
-                <div>
-                  <h3 className="text-lg font-medium text-gray-700 dark:text-gray-300 mb-2">
-                    Success Criteria
-                  </h3>
-                  <ul className="list-disc list-inside space-y-1 ml-4">
-                    {finalizedScope.project_summary.success_criteria.map((item, idx) => (
-                      <li key={idx} className="text-gray-600 dark:text-gray-400">
-                        {item}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-
-            {/* Risks and Mitigation */}
-            {finalizedScope.project_summary.risks_and_mitigation &&
-              Array.isArray(finalizedScope.project_summary.risks_and_mitigation) &&
-              finalizedScope.project_summary.risks_and_mitigation.length > 0 && (
-                <div>
-                  <h3 className="text-lg font-medium text-gray-700 dark:text-gray-300 mb-2">
-                    Risks and Mitigation Strategies
-                  </h3>
-                  <div className="overflow-x-auto">
-                    <table className="min-w-full border border-gray-300 dark:border-gray-600">
-                      <thead className="bg-gray-100 dark:bg-gray-700">
-                        <tr>
-                          <th className="px-4 py-2 text-left text-sm font-semibold text-gray-700 dark:text-gray-200 border-b border-gray-300 dark:border-gray-600">
-                            Risk
-                          </th>
-                          <th className="px-4 py-2 text-left text-sm font-semibold text-gray-700 dark:text-gray-200 border-b border-gray-300 dark:border-gray-600">
-                            Mitigation Strategy
-                          </th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {finalizedScope.project_summary.risks_and_mitigation.map((risk, idx) => (
-                          <tr key={idx} className="hover:bg-gray-50 dark:hover:bg-gray-800">
-                            <td className="px-4 py-2 text-sm text-gray-600 dark:text-gray-400 border-b border-gray-200 dark:border-gray-700">
-                              {risk.risk || '-'}
-                            </td>
-                            <td className="px-4 py-2 text-sm text-gray-600 dark:text-gray-400 border-b border-gray-200 dark:border-gray-700">
-                              {risk.mitigation || '-'}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
+      {
+        scopeLoading ? (
+          <div className="bg-white dark:bg-dark-surface p-6 rounded-xl shadow-md border border-gray-200 dark:border-dark-muted">
+            <h2 className="text-xl font-semibold mb-4 text-gray-800 dark:text-gray-100">
+              Project Summary
+            </h2>
+            <p className="text-gray-500 dark:text-gray-400">Loading...</p>
           </div>
-        </div>
-      ) : null}
+        ) : finalizedScope?.project_summary ? (
+          <div className="bg-white dark:bg-dark-surface p-6 rounded-xl shadow-md border border-gray-200 dark:border-dark-muted">
+            <h2 className="text-xl font-semibold mb-4 text-gray-800 dark:text-gray-100">
+              Project Summary
+            </h2>
+            <div className="space-y-4">
+              {/* Executive Summary */}
+              {finalizedScope.project_summary.executive_summary && (
+                <div>
+                  <h3 className="text-lg font-medium text-gray-700 dark:text-gray-300 mb-2">
+                    Executive Summary
+                  </h3>
+                  <p className="text-gray-600 dark:text-gray-400">
+                    {finalizedScope.project_summary.executive_summary}
+                  </p>
+                </div>
+              )}
+
+              {/* Key Deliverables */}
+              {finalizedScope.project_summary.key_deliverables &&
+                Array.isArray(finalizedScope.project_summary.key_deliverables) &&
+                finalizedScope.project_summary.key_deliverables.length > 0 && (
+                  <div>
+                    <h3 className="text-lg font-medium text-gray-700 dark:text-gray-300 mb-2">
+                      Key Deliverables
+                    </h3>
+                    <ul className="list-disc list-inside space-y-1 ml-4">
+                      {finalizedScope.project_summary.key_deliverables.map((item, idx) => (
+                        <li key={idx} className="text-gray-600 dark:text-gray-400">
+                          {item}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+              {/* Success Criteria */}
+              {finalizedScope.project_summary.success_criteria &&
+                Array.isArray(finalizedScope.project_summary.success_criteria) &&
+                finalizedScope.project_summary.success_criteria.length > 0 && (
+                  <div>
+                    <h3 className="text-lg font-medium text-gray-700 dark:text-gray-300 mb-2">
+                      Success Criteria
+                    </h3>
+                    <ul className="list-disc list-inside space-y-1 ml-4">
+                      {finalizedScope.project_summary.success_criteria.map((item, idx) => (
+                        <li key={idx} className="text-gray-600 dark:text-gray-400">
+                          {item}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+              {/* Risks and Mitigation */}
+              {finalizedScope.project_summary.risks_and_mitigation &&
+                Array.isArray(finalizedScope.project_summary.risks_and_mitigation) &&
+                finalizedScope.project_summary.risks_and_mitigation.length > 0 && (
+                  <div>
+                    <h3 className="text-lg font-medium text-gray-700 dark:text-gray-300 mb-2">
+                      Risks and Mitigation Strategies
+                    </h3>
+                    <div className="overflow-x-auto">
+                      <table className="min-w-full border border-gray-300 dark:border-gray-600">
+                        <thead className="bg-gray-100 dark:bg-gray-700">
+                          <tr>
+                            <th className="px-4 py-2 text-left text-sm font-semibold text-gray-700 dark:text-gray-200 border-b border-gray-300 dark:border-gray-600">
+                              Risk
+                            </th>
+                            <th className="px-4 py-2 text-left text-sm font-semibold text-gray-700 dark:text-gray-200 border-b border-gray-300 dark:border-gray-600">
+                              Mitigation Strategy
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {finalizedScope.project_summary.risks_and_mitigation.map((risk, idx) => (
+                            <tr key={idx} className="hover:bg-gray-50 dark:hover:bg-gray-800">
+                              <td className="px-4 py-2 text-sm text-gray-600 dark:text-gray-400 border-b border-gray-200 dark:border-gray-700">
+                                {risk.risk || '-'}
+                              </td>
+                              <td className="px-4 py-2 text-sm text-gray-600 dark:text-gray-400 border-b border-gray-200 dark:border-gray-700">
+                                {risk.mitigation || '-'}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+            </div>
+          </div>
+        ) : null
+      }
 
       {/* Lightbox Modal for Architecture Diagram */}
-      {isImageModalOpen && finalizedScope?.architecture_diagram && (
-        <DiagramModal
-          src={`${import.meta.env.VITE_API_URL || 'http://localhost:8000'}/api/blobs/download/${finalizedScope.architecture_diagram?.replace('.png', '.svg')}?base=projects`}
-          onClose={() => setIsImageModalOpen(false)}
-        />
-      )}
+      {
+        isImageModalOpen && finalizedScope?.architecture_diagram && (
+          <DiagramModal
+            src={`${import.meta.env.VITE_API_URL || 'http://localhost:8000'}/api/blobs/download/${finalizedScope.architecture_diagram?.replace('.png', '.svg')}?base=projects`}
+            onClose={() => setIsImageModalOpen(false)}
+          />
+        )
+      }
 
       {/* Closeout Modal */}
-      {showCloseModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white dark:bg-dark-card w-full max-w-3xl rounded-xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
-            <div className="p-4 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center bg-gray-50 dark:bg-gray-800">
-              <h3 className="text-xl font-bold text-gray-800 dark:text-gray-100 flex items-center gap-2">
-                <Archive className="w-5 h-5 text-emerald-600" />
-                Project Closeout & Learning
-              </h3>
-              <button onClick={() => setShowCloseModal(false)} className="text-gray-500 hover:text-red-500">
-                <X className="w-6 h-6" />
-              </button>
-            </div>
+      <CloseoutModal
+        isOpen={isCloseoutModalOpen}
+        onClose={() => setIsCloseoutModalOpen(false)}
+        project={project}
+        initialResources={finalizedScope?.resourcing_plan}
+        onReset={() => {
+          // Reload project to update status
+          setLoading(true); // temporary reuse
+          window.location.reload();
+        }}
+      />
 
-            <div className="p-6 overflow-y-auto flex-1">
-              <p className="mb-4 text-sm text-gray-600 dark:text-gray-300 bg-blue-50 dark:bg-blue-900/20 p-3 rounded-lg border border-blue-100 dark:border-blue-800">
-                ℹ️ <strong>Continuous Learning:</strong> Please enter the <em>Actual</em> effort (in months) for each resource. <br />
-                <span className="text-xs mt-1 block">
-                  💡 Actual cost is automatically calculated from: Rate × Actual Effort. This data helps improve future estimates!
-                </span>
-              </p>
-
-              {/* Resource Details Table */}
-              <h4 className="text-md font-semibold text-gray-800 dark:text-gray-100 mb-3">
-                Resource Utilization
-              </h4>
-              <table className="w-full text-sm text-left">
-                <thead className="text-xs text-gray-700 uppercase bg-gray-100 dark:bg-gray-700 dark:text-gray-300">
-                  <tr>
-                    <th className="px-4 py-3">Resource</th>
-                    <th className="px-4 py-3">Rate/Month</th>
-                    <th className="px-4 py-3">Est. Effort (months)</th>
-                    <th className="px-4 py-3 w-32">Actual Effort (months)</th>
-                    <th className="px-4 py-3">Est. Cost ($)</th>
-                    <th className="px-4 py-3">Actual Cost ($)</th>
-                    <th className="px-4 py-3">Notes (Why different?)</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {Object.keys(actuals).map(key => {
-                    const r = actuals[key];
-                    const actualCost = (r.rate * (parseFloat(r.actual_effort) || 0)).toFixed(2);
-
-                    return (
-                      <tr key={key} className="bg-white border-b dark:bg-gray-800 dark:border-gray-700">
-                        <td className="px-4 py-2 font-medium">{r.name}</td>
-                        <td className="px-4 py-2 text-gray-500">${r.rate.toLocaleString()}</td>
-                        <td className="px-4 py-2 text-gray-500">{r.estimated_effort.toFixed(1)}</td>
-                        <td className="px-4 py-2">
-                          <input
-                            type="number"
-                            step="0.1"
-                            min="0"
-                            placeholder="Enter actual months"
-                            className="w-full p-1 border rounded dark:bg-gray-700 dark:border-gray-600"
-                            value={r.actual_effort}
-                            onChange={(e) => setActuals({
-                              ...actuals,
-                              [key]: { ...actuals[key], actual_effort: e.target.value }
-                            })}
-                          />
-                        </td>
-                        <td className="px-4 py-2 text-gray-500">${parseFloat(r.estimated_cost).toLocaleString()}</td>
-                        <td className="px-4 py-2 font-semibold text-green-600">
-                          ${parseFloat(actualCost).toLocaleString()}
-                        </td>
-                        <td className="px-4 py-2">
-                          <input
-                            type="text"
-                            className="w-full p-1 border rounded dark:bg-gray-700 dark:border-gray-600"
-                            placeholder="Additional OAuth work..."
-                            value={r.notes}
-                            onChange={(e) => setActuals({
-                              ...actuals,
-                              [key]: { ...actuals[key], notes: e.target.value }
-                            })}
-                          />
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-
-            <div className="p-4 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 flex justify-end gap-3">
-              <button
-                onClick={() => setShowCloseModal(false)}
-                className="px-4 py-2 text-gray-600 hover:text-gray-800 font-medium"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={submitCloseout}
-                disabled={closing}
-                className="px-6 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 font-medium flex items-center gap-2 disabled:opacity-50"
-              >
-                {closing ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-                Save & Learn
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-    </div>
+    </div >
   );
 }

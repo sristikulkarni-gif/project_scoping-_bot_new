@@ -22,7 +22,7 @@ from app.utils.ai_clients import (
     embed_text_ollama,
     get_azure_client,
 )
-from app.services.agent_tools import get_rate_cards_async, search_knowledge_base_direct
+from app.services.agent_tools import get_rate_cards_async
 
 
 logger = logging.getLogger(__name__)
@@ -3198,7 +3198,7 @@ Generate activities with realistic start/end dates, proper role assignments, and
 
         # Step 3: Auto-save finalized_scope.json in Azure Blob + DB
         try:
-            from sqlalchemy import select
+
             result = await db.execute(
                 select(models.ProjectFile).filter(
                     models.ProjectFile.project_id == project.id,
@@ -3273,17 +3273,6 @@ async def regenerate_from_instructions(
         return {**cleaned, "_finalized": True}
 
 
-    # === RAG INTEGRATION ===
-    # Retrieve latest ACTUAL_DATA to validate the plan
-    actual_data_context = ""
-    try:
-        # Search specifically for actuals in the same domain/tech
-        rag_query = f"ACTUAL_DATA for {project.domain} {project.tech_stack} project closeout"
-        logger.info(f"🔍 Regenerate Scope: Searching KB for '{rag_query}'")
-        actual_data_context = search_knowledge_base_direct(rag_query, limit=3)
-    except Exception as e:
-        logger.warning(f"Failed to retrieve KB context for regeneration: {e}")
-
 
     prompt = f"""
 You are an **expert AI project planner and delivery architect** responsible for maintaining a project scope in JSON format.
@@ -3291,14 +3280,14 @@ You are an **expert AI project planner and delivery architect** responsible for 
 You are given:
 1. The current draft project scope (JSON with keys: `overview`, `activities`, `resourcing_plan`).
 2. The user’s latest change instructions.
-3. **LEARNINGS FROM SIMILAR PROJECTS (ACTUAL DATA)**:
-{actual_data_context}
 
 Your task:
-- **Understand** the user’s intent.
-- **Review content against Actual Data**: If the draft estimates (duration/cost) are significantly lower than the `ACTUAL_DATA` provided, and the user hasn't explicitly asked for a low estimate, you should **ADJUST** the plan closer to reality.
-- **Cite your sources**: If you use the Actual Data to adjust the plan, you MUST add a sentence to the `overview["objective"]` or `overview["goals"]` stating: "Incorporated learnings from similar closed projects (Actual Duration: X months)."
+- **Understand** the user’s intent (instructions may be in natural language).
 - **Regenerate** the scope accordingly:
+  - Apply all user instructions faithfully.
+  - Preserve structure and realism of the plan.
+  - Re-calculate activity dates, dependencies, and efforts using the rules below.
+  - Reflect improvements like “optimize”, “simplify”, “rebalance”, or “add QA phase”.
   - Apply all user instructions faithfully.
   - Preserve structure and realism of the plan.
   - Re-calculate activity dates, dependencies, and efforts using the rules below.
@@ -3808,3 +3797,148 @@ async def finalize_scope(
 
     logger.info(f" Finalized scope saved (no LLM) for project {project_id}")
     return old_file, {**finalized, "_finalized": True}
+
+
+def _apply_closeout_actuals_to_scope(scope: dict, actuals: List[dict]) -> dict:
+    """
+    Override scope estimates with actual closed-out data.
+    Updates:
+    1. Resourcing Plan (Effort, Cost)
+    2. Activities (Effort, Duration, End Date - scaled by variance)
+    3. project_summary (Total Cost)
+    """
+    if not actuals:
+        return scope
+
+    logger.info(f"Applying {len(actuals)} closeout actuals to scope...")
+    
+    # Create a map of resource_name -> actual_data
+    # Use lowercase for case-insensitive matching
+    actual_map = {a.resource_name.lower(): a for a in actuals}
+    
+    # 1. Update Resourcing Plan & Calculate Variance
+    resourcing = scope.get("resourcing_plan", [])
+    updated_resourcing = []
+    
+    # Track variance factors per role to apply to activities
+    # role -> effort_multiplier (e.g. 1.5 means took 50% longer)
+    role_variance = {} 
+
+    for item in resourcing:
+        original_role = item.get("Resources") or item.get("Role", "")
+        role_key = original_role.lower()
+        
+        if role_key in actual_map:
+            actual = actual_map[role_key]
+            
+            # Start with existing values
+            old_effort = float(item.get("Efforts") or item.get("Effort Months", 0) or 0)
+            
+            # Get actual effort
+            new_effort = float(actual.actual_effort_months or 0)
+            new_cost = float(actual.actual_cost or 0)
+
+            # Calculate Variance for activity scaling
+            if old_effort > 0 and new_effort > 0:
+                variance = new_effort / old_effort
+                role_variance[role_key] = variance
+                logger.info(f"   Role {original_role}: Effort {old_effort} -> {new_effort} (Variance: {variance:.2f}x)")
+            
+            # Update Resourcing Plan Item
+            item["Efforts"] = new_effort  # Use standard key
+            item["Effort Months"] = new_effort # Backward compatibility
+            item["Cost"] = new_cost
+            
+            # Rate might be recalculated for display consistency
+            if new_effort > 0:
+                 # Try to update standard key first
+                 if "Rate/month" in item:
+                     item["Rate/month"] = new_cost / new_effort
+                 else:
+                     item["Rate"] = new_cost / new_effort
+            
+            # Mark as actual
+            item["_is_actual"] = True
+            
+        updated_resourcing.append(item)
+        
+    scope["resourcing_plan"] = updated_resourcing
+    
+    # 2. Update Activities (Time Shift)
+    activities = scope.get("activities", [])
+    updated_activities = []
+    
+    for act in activities:
+        owner = act.get("Owner", "").lower()
+        # Determine variance to apply
+        variance = 1.0
+        
+        if owner in role_variance:
+            variance = role_variance[owner]
+        else:
+            # Check secondary resources
+            res_str = str(act.get("Resources", "")).lower()
+            # If any of the roles with variance are in the resources string, apply max variance? 
+            # Or average? Let's use the first match for simplicity or max variance for conservatism.
+            # Let's take the primary resource (owner) variance if available, else 1.0
+            # If owner doesn't match, maybe check if any resource matches
+            for role, v in role_variance.items():
+                 # Simple substring check - might need better tokenization
+                if role in res_str:
+                    variance = v
+                    break
+        
+        if variance != 1.0:
+            # Scale effort
+            old_effort_act = float(act.get("Effort Months", 0) or 1.0)
+            new_effort_act = round_to_half(old_effort_act * variance)
+            act["Effort Months"] = new_effort_act
+            
+            # Recalculate End Date if Start Date exists
+            start_date_str = act.get("Start Date")
+            if start_date_str:
+                try:
+                    start_date = datetime.strptime(start_date_str, "%Y-%m-%d")
+                    # Duration in days approx (months * 30)
+                    duration_days = int(new_effort_act * 30)
+                    new_end_date = start_date + timedelta(days=duration_days)
+                    act["End Date"] = new_end_date.strftime("%Y-%m-%d")
+                    # logger.info(f"   Activity {act.get('ID')}: {old_effort_act}m -> {new_effort_act}m. End Date shifted to {act['End Date']}")
+                except Exception as e:
+                    logger.warning(f"Failed to shift date for activity {act.get('ID')}: {e}")
+        
+        updated_activities.append(act)
+        
+    scope["activities"] = updated_activities
+    
+    # 3. Recalculate Total Cost in Overview/Summary
+    total_cost = sum(float(item.get("Cost", 0) or 0) for item in updated_resourcing)
+    
+    if "cost_summary" not in scope:
+        scope["cost_summary"] = {}
+    
+    scope["cost_summary"]["total_cost"] = total_cost
+    
+    # 4. Recalculate Project Duration in Overview from Activities
+    start_dates = [act.get("Start Date") for act in updated_activities if act.get("Start Date")]
+    end_dates = [act.get("End Date") for act in updated_activities if act.get("End Date")]
+    
+    if start_dates and end_dates:
+        try:
+            min_start = min(datetime.strptime(str(d), "%Y-%m-%d") for d in start_dates)
+            max_end = max(datetime.strptime(str(d), "%Y-%m-%d") for d in end_dates)
+            
+            # Duration in days approx
+            duration_days = (max_end - min_start).days
+            # Assume 30 days/month
+            duration_months = round(max(0.5, duration_days / 30.0), 1)
+            
+            if "overview" not in scope:
+                scope["overview"] = {}
+                
+            scope["overview"]["Duration"] = f"{duration_months} months"
+            logger.info(f"   Recalculated Duration: {duration_months} months (based on activities)")
+        except Exception as e:
+            logger.warning(f"Failed to recalculate duration: {e}")
+    
+    return scope

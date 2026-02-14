@@ -2732,10 +2732,42 @@ def _transform_agent_output_to_scope_format(agent_scope: dict, project) -> dict:
     current_date = start_date
     
     for idx, act in enumerate(activities_list, 1):
-        # Calculate dates based on effort
+        # Priority 1: Use explicit Agent Schedule (weeks)
+        start_offset_weeks = act.get("start_offset_weeks")
+        duration_weeks = act.get("duration_weeks")
+        
+        # Priority 2: Use explicit Agent Dates (if provided, rare)
+        # (Already parsed in timeline, but per activity?)
+        
         effort_months = act.get("effort_months", 1)
-        effort_days = int(effort_months * 30)
-        end_date = current_date + timedelta(days=effort_days)
+        
+        if start_offset_weeks is not None and duration_weeks is not None:
+             # 🗓️ DYNAMIC SCHEDULE from Agent
+             offset_days = int(float(start_offset_weeks) * 7)
+             duration_days = int(float(duration_weeks) * 7)
+             
+             act_start_date = start_date + timedelta(days=offset_days)
+             act_end_date = act_start_date + timedelta(days=duration_days)
+             
+             # If agent didn't provide effort_months, derive from duration
+             if "effort_months" not in act:
+                 effort_months = round_to_half(duration_weeks / 4.0)
+                 
+             # Update current_date for fallback usage in mixed lists?
+             # If we have explicit dates, we don't strictly update current_date sequentially
+             # But let's keep it moving just in case the NEXT item lacks dates
+             if act_end_date > current_date:
+                 current_date = act_end_date 
+
+        else:
+             # 📉 FALLBACK: Sequential Waterfall (Legacy)
+             effort_days = int(effort_months * 30)
+             act_start_date = current_date
+             act_end_date = current_date + timedelta(days=effort_days)
+             
+             # Move current date forward (with 20% overlap hardcoded fallback)
+             # This is only used if Agent FAILS to provide schedule
+             current_date = current_date + timedelta(days=int(effort_days * 0.8))
         
         # Extract resources (dependencies in agent format)
         resources = act.get("dependencies", [])
@@ -2749,15 +2781,12 @@ def _transform_agent_output_to_scope_format(agent_scope: dict, project) -> dict:
             "Activities": act.get("name", f"Activity {idx}"),
             "Owner": act.get("assigned_role", "Project Manager"),
             "Resources": resources_str,
-            "Start Date": current_date.strftime("%Y-%m-%d"),
-            "End Date": end_date.strftime("%Y-%m-%d"),
+            "Start Date": act_start_date.strftime("%Y-%m-%d"),
+            "End Date": act_end_date.strftime("%Y-%m-%d"),
             "Effort Months": effort_months
         }
         
         activities.append(activity)
-        
-        # Move current date forward (with some overlap)
-        current_date = current_date + timedelta(days=int(effort_days * 0.8))
     
     # If no activities from agent, create basic structure from phases
     if not activities and phases:

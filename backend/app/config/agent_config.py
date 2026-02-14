@@ -77,6 +77,15 @@ Step 5: Verification
 66: 
 67: **If you generate a generic name like "Frontend Development", you will be PENALIZED. Always specify WHAT is being developed.**
 
+**CRITICAL: SCHEDULING RULES:**
+
+You are responsible for the project schedule. Do NOT assume a simple sequential list.
+1. **Parallelism**: Schedule independent tasks in parallel (e.g. "Frontend" and "Backend" can often overlap).
+2. **Dependencies**: Respect logical dependencies (e.g. "Database Design" must finish before "API Implementation").
+3. **Specifics**: For each activity, calculate:
+   - `start_offset_weeks`: When does it start relative to Week 0?
+   - `duration_weeks`: How long does it take?
+
 **OUTPUT FORMAT:**
 
 Return a JSON object with this exact structure:
@@ -127,6 +136,8 @@ Return a JSON object with this exact structure:
       "name": "Requirements Analysis",
       "phase": "Phase 1",
       "effort_months": 0.5,
+      "start_offset_weeks": 0,
+      "duration_weeks": 2,
       "assigned_role": "Business Analyst",
       "dependencies": []
     },

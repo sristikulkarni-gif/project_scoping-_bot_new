@@ -104,6 +104,7 @@ ROLE_RATE_MAP: Dict[str, float] = {
     "Security Administrator": 3000.0,
     "System Administrator": 2800.0,
     "Solution Architect": 4000.0,
+    "Unassigned Resource": 2500.0,
 }
 
 #  helpers
@@ -163,7 +164,7 @@ def _normalize_activity_fields(act: dict, activity_id: int) -> dict:
         act.get('owner', '') or
         act.get('responsible', '') or
         act.get('assignee', '') or
-        "Backend Developer"  # Default fallback
+        "Unassigned Resource"  # Default fallback
     )
 
     resources = act.get('Resources', '') or act.get('resources', '')
@@ -336,7 +337,7 @@ def _normalize_activity_fields(act: dict, activity_id: int) -> dict:
                     flat_activity = {
                         "ID": activity_id,
                         "Activities": act.get('name', '') or act.get('activity', ''),
-                        "Owner": act.get('owner', '') or act.get('responsible', '') or "Backend Developer",
+                        "Owner": act.get('owner', '') or act.get('responsible', '') or "Unassigned Resource",
                         "Resources": ", ".join(act.get('resources', [])) if isinstance(act.get('resources'), list) else act.get('resources', ''),
                         "Start Date": act.get('start_date', '') or act.get('startDate', ''),
                         "End Date": act.get('end_date', '') or act.get('endDate', ''),
@@ -369,7 +370,7 @@ def _normalize_activity_fields(act: dict, activity_id: int) -> dict:
                 flat_activity = {
                     "ID": activity_id,
                     "Activities": act,
-                    "Owner": "Backend Developer",
+                    "Owner": "Unassigned Resource",
                     "Resources": "",
                     "Start Date": "",
                     "End Date": "",
@@ -379,7 +380,7 @@ def _normalize_activity_fields(act: dict, activity_id: int) -> dict:
                 flat_activity = {
                     "ID": activity_id,
                     "Activities": act.get('name', '') or act.get('activity', ''),
-                    "Owner": act.get('owner', '') or act.get('responsible', '') or "Backend Developer",
+                    "Owner": act.get('owner', '') or act.get('responsible', '') or "Unassigned Resource",
                     "Resources": ", ".join(act.get('resources', [])) if isinstance(act.get('resources'), list) else act.get('resources', ''),
                     "Start Date": act.get('start_date', '') or act.get('startDate', ''),
                     "End Date": act.get('end_date', '') or act.get('endDate', ''),
@@ -908,12 +909,12 @@ def _build_scope_prompt(rfp_text: str, kb_chunks: List[str], project=None, quest
         "   - Post-deployment support activities\n\n"
         "**CRITICAL: Activity Naming Rules:**\n"
         "- Activity names MUST describe WHAT is being built (functionality), NOT WHO builds it (seniority)\n"
-        "- NEVER include seniority levels in activity names: ❌ '(Junior)', '(Senior)', '(Mid-level)'\n"
+        "- NEVER include seniority levels in activity names: [BAD] '(Junior)', '(Senior)', '(Mid-level)'\n"
         "- Use specific, technical, functional descriptions\n"
-        "- ✅ GOOD: 'Backend Authentication API', 'Frontend User Dashboard', 'Payment Gateway Integration'\n"
-        "- ✅ GOOD: 'Database Schema Design', 'RESTful API Endpoints', 'Admin Panel UI Components'\n"
-        "- ❌ BAD: 'Backend Development (Junior)', 'Frontend Work (Senior)', 'Simple Development Tasks'\n"
-        "- ❌ BAD: 'Development Phase 1', 'Coding Tasks', 'Advanced Features'\n"
+        "- [GOOD]: 'Backend Authentication API', 'Frontend User Dashboard', 'Payment Gateway Integration'\n"
+        "- [GOOD]: 'Database Schema Design', 'RESTful API Endpoints', 'Admin Panel UI Components'\n"
+        "- [BAD]: 'Backend Development (Junior)', 'Frontend Work (Senior)', 'Simple Development Tasks'\n"
+        "- [BAD]: 'Development Phase 1', 'Coding Tasks', 'Advanced Features'\n"
         "- Break down large activities by FEATURE or MODULE, not by developer seniority\n"
         "- Example: Instead of 'Backend Development' + 'Backend Development (Junior)', use:\n"
         "  'Backend Core Services & Business Logic' + 'Backend CRUD API Endpoints'\n\n"
@@ -923,9 +924,9 @@ def _build_scope_prompt(rfp_text: str, kb_chunks: List[str], project=None, quest
         "- `success_criteria`: List 4-6 measurable success metrics (e.g., 'System handles 10k concurrent users', 'API response time < 200ms')\n"
         '- `risks_and_mitigation`: List 4-6 project risks with mitigation strategies as objects with "risk" and "mitigation" fields (e.g., {"risk": "Third-party API downtime", "mitigation": "Implement fallback caching and retry logic"})\n\n'
         "**CRITICAL: Output ONLY the schema above. Do NOT add:**\n"
-        "- ❌ \"cost_projection\" field (this will be auto-generated from resourcing_plan)\n"
-        "- ❌ Any other fields not listed in the schema above\n"
-        "- ❌ No markdown, no commentary, no explanations — ONLY valid JSON matching the schema\n\n"
+        "- [NO] \"cost_projection\" field (this will be auto-generated from resourcing_plan)\n"
+        "- [NO] Any other fields not listed in the schema above\n"
+        "- [NO] No markdown, no commentary, no explanations — ONLY valid JSON matching the schema\n\n"
         "Scheduling Rules: \n"
         f"- The first activity must always start today ({today_str}).\n"
         "- If two activities are **independent**, overlap their timelines by **70–80%** of their duration (not full overlap)."
@@ -937,38 +938,38 @@ def _build_scope_prompt(rfp_text: str, kb_chunks: List[str], project=None, quest
         "- Auto-calculate **overview.Duration** as the total span in months from the earliest Start Date to the latest End Date.\n"
         "- `Complexity` should be simple, medium, or high based on duration of project.\n"
         "\n"
-         "**🔴 CRITICAL: Owner and Resources Assignment Rules:**\n"
+         "**[CRITICAL]: Owner and Resources Assignment Rules:**\n"
         "- `Owner` must ALWAYS be a valid JOB ROLE from the company's rate card.\n"
         "- `Owner` is NEVER an activity name, activity description, or task name.\n"
         "- `Resources` must ALWAYS contain at least 1-2 supporting JOB ROLES from the company's rate card.\n"
         "- `Resources` should list supporting team members who assist the Owner (different from Owner).\n"
         "- You MUST use ONLY the roles listed below - DO NOT invent new roles.\n"
-        "- ⚠️ NEVER leave `Resources` empty or null - ALWAYS assign at least one supporting role.\n"
+        "- [WARNING] NEVER leave `Resources` empty or null - ALWAYS assign at least one supporting role.\n"
         "- For simple activities, assign 1 supporting resource; for complex activities, assign 2-3 resources.\n"
         "- Example: If Owner is 'Backend Developer', Resources could be 'QA Engineer' or 'DevOps Engineer'.\n"
         "\n"
-        f"**🔴 MANDATORY: Use ONLY these exact roles from the company's rate card:**\n"
+        f"**[MANDATORY]: Use ONLY these exact roles from the company's rate card:**\n"
         f"{chr(10).join('  - ' + role for role in (rate_card_roles or []))}\n"
         "\n"
         "**Examples of CORRECT Owner and Resources assignment:**\n"
-        "  ✓ Activity: 'Backend API Development'\n"
-        f"     Owner: \"{rate_card_roles[0] if (rate_card_roles and len(rate_card_roles) > 0) else 'Backend Developer'}\"\n"
+        "  [CORRECT] Activity: 'Backend API Development'\n"
+        f"     Owner: \"{rate_card_roles[0] if (rate_card_roles and len(rate_card_roles) > 0) else 'Unassigned Resource'}\"\n"
         f"     Resources: \"{rate_card_roles[1] if (rate_card_roles and len(rate_card_roles) > 1) else 'QA Engineer'}, {rate_card_roles[2] if (rate_card_roles and len(rate_card_roles) > 2) else 'DevOps Engineer'}\"\n"
         "\n"
-        "  ✓ Activity: 'Data Pipeline Development'\n"
-        f"     Owner: \"{rate_card_roles[1] if (rate_card_roles and len(rate_card_roles) > 1) else 'Data Engineer'}\"\n"
-        f"     Resources: \"{rate_card_roles[0] if (rate_card_roles and len(rate_card_roles) > 0) else 'Backend Developer'}, {rate_card_roles[2] if (rate_card_roles and len(rate_card_roles) > 2) else 'Data Scientist'}\"\n"
+        "  [CORRECT] Activity: 'Data Pipeline Development'\n"
+        f"     Owner: \"{rate_card_roles[1] if (rate_card_roles and len(rate_card_roles) > 1) else 'Unassigned Resource'}\"\n"
+        f"     Resources: \"{rate_card_roles[0] if (rate_card_roles and len(rate_card_roles) > 0) else 'Unassigned Resource'}, {rate_card_roles[2] if (rate_card_roles and len(rate_card_roles) > 2) else 'Unassigned Resource'}\"\n"
         "\n"
-        "  ✓ Activity: 'System Architecture Design'\n"
-        f"     Owner: \"{rate_card_roles[2] if (rate_card_roles and len(rate_card_roles) > 2) else 'Solution Architect'}\"\n"
-        f"     Resources: \"{rate_card_roles[0] if (rate_card_roles and len(rate_card_roles) > 0) else 'Backend Developer'}\"\n"
+        "  [CORRECT] Activity: 'System Architecture Design'\n"
+        f"     Owner: \"{rate_card_roles[2] if (rate_card_roles and len(rate_card_roles) > 2) else 'Unassigned Resource'}\"\n"
+        f"     Resources: \"{rate_card_roles[0] if (rate_card_roles and len(rate_card_roles) > 0) else 'Unassigned Resource'}\"\n"
         "\n"
         "**Examples of INCORRECT assignment (DO NOT DO THIS):**\n"
-        "  ✗ Owner: \"Infrastructure Setup\" (this is an activity, not a role!)\n"
-        "  ✗ Owner: \"Data Ingestion Development\" (this is an activity, not a role!)\n"
-        "  ✗ Resources: \"\" or null (Resources must NEVER be empty!)\n"
-        "  ✗ Resources: \"Backend Developer\" when Owner is also \"Backend Developer\" (don't duplicate Owner in Resources)\n"
-        "  ✗ Owner: \"John Smith\" (this is a person's name, not a role!)\n"
+        "  [INCORRECT] Owner: \"Infrastructure Setup\" (this is an activity, not a role!)\n"
+        "  [INCORRECT] Owner: \"Data Ingestion Development\" (this is an activity, not a role!)\n"
+        "  [INCORRECT] Resources: \"\" or null (Resources must NEVER be empty!)\n"
+        "  [INCORRECT] Resources: \"Backend Developer\" when Owner is also \"Backend Developer\" (don't duplicate Owner in Resources)\n"
+        "  [INCORRECT] Owner: \"John Smith\" (this is a person's name, not a role!)\n"
         "\n"    
         "Activity Duration Guidelines:\n"
         "Estimate realistic durations based on activity type and complexity. Use these as reference:\n"
@@ -1073,7 +1074,7 @@ def _build_scope_prompt(rfp_text: str, kb_chunks: List[str], project=None, quest
         "- Total project duration should realistically reflect the sum of critical path activities\n"
         "- Consider dependencies when scheduling - dependent activities should account for handoff time\n"
         "\n"
-        "**CRITICAL: Infrastructure & Setup Activities - Use SHORT Durations!**\n"
+        "**[CRITICAL]: Infrastructure & Setup Activities - Use SHORT Durations!**\n"
         "Infrastructure and environment setup tasks are typically QUICK (1-2 weeks, NOT 1 month):\n"
         "- Azure/AWS/Cloud Infrastructure Setup: 0.25-0.5 month (1-2 weeks)\n"
         "- Database Environment Setup: 0.25-0.5 month (1-2 weeks)\n"
@@ -3351,9 +3352,9 @@ WRONG activity example (DO NOT DO THIS):
 ```json
 {{
   "ID": 1,
-  "Activities": "Project Manager",  ← WRONG! This is a role name, not an activity!
-  "Owner": "Unassigned",  ← WRONG! Must have a real owner!
-  "Resources": "",
+  "Activities": "Project Manager",  (WRONG: This is a role name, not an activity)\n
+  "Owner": "Unassigned",  (WRONG: Must have a real owner)\n
+  "Resources": "",\n
   "Start Date": "2025-01-15",
   "End Date": "2025-02-15",
   "Effort Months": 1
@@ -3403,8 +3404,8 @@ Critical: When user requests to add or remove roles, you MUST update BOTH activi
 4. Remove the role from ALL Resources fields across all activities
 5. DO NOT delete any activities - only change role assignments
 6. Example: If removing "Business Analyst":
-   - Activity: "Owner": "Business Analyst" → change to "Owner": "Product Manager"
-   - Activity: "Resources": "Business Analyst, Data Engineer" → change to "Resources": "Data Engineer"
+   - Activity: "Owner": "Business Analyst" -> change to "Owner": "Product Manager"\n
+   - Activity: "Resources": "Business Analyst, Data Engineer" -> change to "Resources": "Data Engineer"\n
    - Keep ALL other activities unchanged
    - resourcing_plan: will be auto-calculated
 

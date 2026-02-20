@@ -121,6 +121,29 @@ async def generate_with_presenton(
     except Exception as e:
         logger.warning(f"Failed to extract RFP content: {e}")
         # Non-blocking - continue with scope data only
+
+    # Inject Architecture Diagram URL if available
+    try:
+        # Find architecture files (png or svg)
+        arch_files = [
+            f for f in project.files 
+            if "architecture" in f.file_name.lower() 
+            and (f.file_name.endswith(".png") or f.file_name.endswith(".svg"))
+        ]
+        
+        if arch_files:
+            # Sort to prefer png if multiple?
+            # Adjust sort: png first
+            arch_files.sort(key=lambda x: x.file_name.endswith(".svg")) # False(.png) < True(.svg)
+            arch_file = arch_files[0]
+            
+            # Generate SAS URL (valid for 1 hour)
+            sas_url = azure_blob.generate_blob_sas_url(arch_file.file_path)
+            scope_data["architecture_diagram_url"] = sas_url
+            logger.info(f"🎨 Injected architecture diagram URL for Presenton: {arch_file.file_name}")
+            
+    except Exception as e:
+        logger.warning(f"Failed to inject architecture diagram: {e}")
     
     # Check Presenton availability
     if not await presenton_client.health_check():

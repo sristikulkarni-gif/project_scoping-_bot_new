@@ -15,7 +15,7 @@ export const checkPresentonHealth = async () => {
  * @param {number} nSlides - Number of slides to generate (default: 10)
  * @param {string} template - Template name (default: "general")
  */
-export const generateWithPresenton = async (projectId, nSlides = 10, template = "general") => {
+export const generateWithPresenton = async (projectId, nSlides = 15, template = "general") => {
     const response = await api.post(`/presenton/generate/${projectId}`, null, {
         params: { n_slides: nSlides, template }
     });

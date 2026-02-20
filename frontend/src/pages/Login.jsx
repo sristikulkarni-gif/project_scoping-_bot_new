@@ -17,7 +17,7 @@ export default function Login() {
 
       // Save token under both keys for compatibility
       localStorage.setItem("access_token", res.data.access_token);
-      localStorage.setItem("token", res.data.access_token); // For AccuracyDashboard
+
       if (res.data.refresh_token) {
         localStorage.setItem("refresh_token", res.data.refresh_token);
       }

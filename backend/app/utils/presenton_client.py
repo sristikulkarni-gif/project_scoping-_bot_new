@@ -159,6 +159,14 @@ class PresentonClient:
                 rfp_preview += "\n\n[... document continues ...]"
             lines.append(f"\n{rfp_preview}")
             lines.append("\n---\n")
+
+        # [CRITICAL INSTRUCTION]
+        lines.append("\n[INSTRUCTION TO AI]:")
+        lines.append("1. **NO PLACEHOLDERS**: Never leave text like '[Insert Name]', '[Date]', 'XX', or '[TBD]'.")
+        lines.append("2. **FILL GAPS**: If a piece of data is missing, ESTIMATE it based on the project context or use generic professional terms (e.g., 'To Be Determined during Planning').")
+        lines.append("3. **REAL NAMES**: For 'Team', if no specific names are provided, invent realistic personas (e.g., 'Sarah Chen - Lead Architect') to make the presentation look complete.")
+        lines.append("4. **COMPLETE SENTENCES**: Do not use fragments. Write polished, professional copy.")
+        lines.append("\n---\n")
         
         # ===== SECTION 2: Project Overview =====
         if overview := scope.get("overview"):
@@ -228,22 +236,43 @@ class PresentonClient:
                                 lines.append(f"**Effort:** {effort} months")
                     else:
                         lines.append(f"{i}. {activity}")
+
+        # [REMOVED] Section 6.5 Detailed Roadmap - Replaced by paginated Section 8.5
+        
+        # ===== SECTION 6.6: Architecture Diagram =====
+        if arch_diagram := scope.get("architecture_diagram_url"):
+            lines.append("\n## System Architecture")
+            lines.append(f"Architecture Diagram: {arch_diagram}")
+            lines.append("(Please verify this diagram aligns with the project scope)")
+
+        # ===== SECTION 12: Historical Context =====
+        lines.append("\n## Estimation Context")
+        lines.append("Timelines and costs are estimated based on requirements and, where available, adjusted using historical performance data from similar closed projects.")
+        if scope.get("discount_percentage"):
+             lines.append(f"Note: A {scope['discount_percentage']}% discount has been applied to the cost estimates.")
         
         # ===== SECTION 7: Team & Resources =====
         if resourcing := scope.get("resourcing_plan"):
-            lines.append("\n## Team & Resources")
-            if isinstance(resourcing, list):
-                for resource in resourcing:
-                    if isinstance(resource, dict):
-                        role = resource.get("Resources", resource.get("role", ""))
-                        effort = resource.get("Effort (Months)", resource.get("effort", ""))
-                        if role:
-                            effort_str = f" ({effort} months)" if effort else ""
-                            lines.append(f"- {role}{effort_str}")
+            if isinstance(resourcing, list) and resourcing:
+                # Paginate Team: Max 8 per slide
+                chunk_size = 8
+                chunks = [resourcing[i:i + chunk_size] for i in range(0, len(resourcing), chunk_size)]
+                
+                for i, chunk in enumerate(chunks):
+                    suffix = f" (Part {i+1})" if len(chunks) > 1 else ""
+                    lines.append(f"\n## Team & Resources{suffix}")
+                    for resource in chunk:
+                        if isinstance(resource, dict):
+                            role = resource.get("Resources", resource.get("role", ""))
+                            effort = resource.get("Effort (Months)", resource.get("effort", ""))
+                            if role:
+                                effort_str = f" ({effort} months)" if effort else ""
+                                # Use compact bullet points for better fit
+                                lines.append(f"- **{role}**{effort_str}")
         
-        # ===== SECTION 8: Timeline =====
+        # ===== SECTION 8: Timeline Overview =====
         if timeline := scope.get("timeline"):
-            lines.append("\n## Project Timeline")
+            lines.append("\n## Project Phases")
             if isinstance(timeline, list):
                 for phase in timeline:
                     if isinstance(phase, dict):
@@ -254,20 +283,60 @@ class PresentonClient:
                             lines.append(f"\n**{phase_name}**")
                             if start and end:
                                 lines.append(f"Duration: {start} to {end}")
-        
+            
+        # ===== SECTION 8.5: Detailed Roadmap (Paginated) =====
+        if activities := scope.get("activities"):
+             if isinstance(activities, list) and activities:
+                 # Paginate Roadmap: Max 10 per slide for table visibility
+                 chunk_size = 10
+                 chunks = [activities[i:i + chunk_size] for i in range(0, len(activities), chunk_size)]
+                 
+                 for i, chunk in enumerate(chunks):
+                     suffix = f" (Part {i+1})" if len(chunks) > 1 else ""
+                     lines.append(f"\n## Detailed Schedule{suffix}")
+                     lines.append("| Activity | Start | End |")
+                     lines.append("| :--- | :--- | :--- |")
+                     for act in chunk:
+                         if isinstance(act, dict):
+                             name = act.get("Activities", act.get("name", "Task"))
+                             # Truncate very long names
+                             if len(name) > 50:
+                                 name = name[:47] + "..."
+                             start = act.get("Start Date", "-")
+                             end = act.get("End Date", "-")
+                             if start != "-" and end != "-":
+                                 lines.append(f"| {name} | {start} | {end} |")
+
         # ===== SECTION 9: Risks & Mitigation =====
         if risks := scope.get("risks"):
-            lines.append("\n## Risks & Mitigation")
-            if isinstance(risks, list):
-                for risk in risks[:5]:  # Top 5 risks
-                    if isinstance(risk, dict):
-                        risk_desc = risk.get("Risk", risk.get("risk", ""))
-                        mitigation = risk.get("Mitigation", risk.get("mitigation", ""))
-                        if risk_desc:
-                            lines.append(f"\n**Risk:** {risk_desc}")
-                            if mitigation:
-                                lines.append(f"**Mitigation:** {mitigation}")
+            # Paginate Risks: Max 4 per slide (they are text heavy)
+            if isinstance(risks, list) and risks:
+                chunk_size = 4
+                chunks = [risks[i:i + chunk_size] for i in range(0, len(risks), chunk_size)]
+                
+                for i, chunk in enumerate(chunks):
+                    suffix = f" (Part {i+1})" if len(chunks) > 1 else ""
+                    lines.append(f"\n## Risks & Mitigation{suffix}")
+                    for risk in chunk:
+                        if isinstance(risk, dict):
+                            risk_desc = risk.get("Risk", risk.get("risk", ""))
+                            mitigation = risk.get("Mitigation", risk.get("mitigation", ""))
+                            if risk_desc:
+                                lines.append(f"\n**Risk:** {risk_desc}")
+                                if mitigation:
+                                    lines.append(f"**Mitigation:** {mitigation}")
         
+        # ===== SECTION 9.5: Graphical Timeline (Mermaid) =====
+        if activities := scope.get("activities"):
+             if isinstance(activities, list) and activities:
+                 mermaid_code = self._generate_mermaid_gantt(activities)
+                 if mermaid_code:
+                     lines.append("\n## Visual Timeline")
+                     lines.append("```mermaid")
+                     lines.append(mermaid_code)
+                     lines.append("```")
+                     lines.append("\n[INSTRUCTION TO AI]: Render the above Mermaid code as a VISUAL GANTT CHART on a dedicated slide. Do not show the code text.")
+
         # ===== SECTION 10: Cost Estimate =====
         if cost := scope.get("total_cost"):
             lines.append("\n## Cost Estimate")
@@ -287,6 +356,41 @@ class PresentonClient:
     def get_edit_url(self, presentation_id: str) -> str:
         """Get the full external URL to edit a presentation"""
         return f"{PRESENTON_EXTERNAL_URL}/presentation?id={presentation_id}"
+
+    def _generate_mermaid_gantt(self, activities: list) -> str:
+        """
+        Generate Mermaid Gantt chart syntax from activities list.
+        Limits to top 20 items to prevent rendering issues.
+        """
+        try:
+            mermaid = ["gantt", "    title Project Timeline", "    dateFormat YYYY-MM-DD", "    axisFormat %m/%d"]
+            mermaid.append("    section Development")
+            
+            count = 0
+            for act in activities:
+                if isinstance(act, dict):
+                    name = act.get("Activities", act.get("name", "Task"))
+                    # Sanitize name: remove colons, limited length
+                    clean_name = name.replace(":", "-").replace("#", "").replace('"', '').strip()[:30]
+                    
+                    start = act.get("Start Date", "-")
+                    end = act.get("End Date", "-")
+                    
+                    # Validate date format roughly (YYYY-MM-DD)
+                    if start and end and len(start) == 10 and len(end) == 10 and start != "-" and end != "-":
+                        mermaid.append(f"    {clean_name} : {start}, {end}")
+                        count += 1
+                        
+                if count >= 20: # Limit to avoid huge charts
+                    break
+            
+            if count == 0:
+                return ""
+                
+            return "\n".join(mermaid)
+        except Exception as e:
+            logger.warning(f"Failed to generate mermaid chart: {e}")
+            return ""
 
 
 # Singleton instance

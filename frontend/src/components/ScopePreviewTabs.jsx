@@ -140,7 +140,15 @@ const ScopePreviewTabs = ({ activeTab, parsedDraft }) => {
 
     // Check if data is array of objects
     if (typeof data[0] === 'object' && !Array.isArray(data[0])) {
-      const headers = Object.keys(data[0]);
+      const allHeaders = Object.keys(data[0]);
+
+      // Filter out columns that are completely empty across all rows
+      const headers = allHeaders.filter(header => {
+        return data.some(row => {
+          const val = row[header];
+          return val !== null && val !== undefined && val !== '' && val !== 'null';
+        });
+      });
 
       // Check if this is a resourcing plan (has "Cost" column)
       const isResourcingPlan = headers.includes('Cost') || headers.includes('cost');

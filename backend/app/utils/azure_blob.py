@@ -262,6 +262,18 @@ def generate_sas_url(expiry_hours: int = 1) -> str:
     )
     return f"https://{AZURE_STORAGE_ACCOUNT}.blob.core.windows.net/{AZURE_STORAGE_CONTAINER}?{sas_token}"
 
+def generate_blob_sas_url(blob_name: str, expiry_hours: int = 1) -> str:
+    """Generate a read-only SAS URL for a specific blob."""
+    path = _normalize_path(blob_name, "")
+    sas_token = generate_container_sas(
+        account_name=AZURE_STORAGE_ACCOUNT,
+        container_name=AZURE_STORAGE_CONTAINER,
+        account_key=AZURE_STORAGE_KEY,
+        permission=ContainerSasPermissions(read=True),
+        expiry=datetime.utcnow() + timedelta(hours=expiry_hours),
+    )
+    return f"https://{AZURE_STORAGE_ACCOUNT}.blob.core.windows.net/{AZURE_STORAGE_CONTAINER}/{path}?{sas_token}"
+
 # setting up the ETL from blob to qdrant
 
 # def upload_blob(file):

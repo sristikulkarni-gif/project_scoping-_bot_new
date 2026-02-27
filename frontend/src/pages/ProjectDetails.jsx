@@ -2,6 +2,9 @@ import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import projectApi from "../api/projectApi";
 import { RefreshCw, Download, File, Archive, X, Save, Plus, Minus } from "lucide-react";
+import ReactFlowDiagram from "../components/ReactFlowDiagram";
+import ScopePreviewTabs from "../components/ScopePreviewTabs";
+import ConfidenceGauge from "../components/ConfidenceGauge";
 
 /**
  * Modal to view Architecture Diagram with Zoom/Pan controls
@@ -380,6 +383,27 @@ export default function ProjectDetails() {
         </div>
       </div>
 
+      {finalizedScope?._warnings && finalizedScope._warnings.length > 0 && (
+        <div className="flex flex-col gap-2 p-4 bg-orange-50 border border-orange-200 text-orange-800 rounded-xl shadow-md mt-4">
+          <div className="flex items-center gap-2 font-semibold text-orange-900">
+            <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5" viewBox="0 0 20 20" fill="currentColor">
+              <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+            </svg>
+            Industry Benchmark Warnings
+          </div>
+          <ul className="list-disc list-inside space-y-1 ml-1 text-sm">
+            {finalizedScope._warnings.map((warning, idx) => (
+              <li key={idx}>{warning}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      <ConfidenceGauge
+        score={finalizedScope?.confidence_score}
+        reasons={finalizedScope?.confidence_reasons || []}
+      />
+
       {/* Uploaded Files */}
       <div className="bg-white dark:bg-dark-surface p-6 rounded-xl shadow-md border border-gray-200 dark:border-dark-muted">
         <h2 className="text-xl font-semibold mb-4 text-gray-800 dark:text-gray-100">
@@ -428,6 +452,15 @@ export default function ProjectDetails() {
               Architecture Diagram
             </h2>
             <p className="text-gray-500 dark:text-gray-400">Loading...</p>
+          </div>
+        ) : typeof finalizedScope?.architecture_diagram === 'object' && finalizedScope.architecture_diagram.nodes ? (
+          <div className="bg-white dark:bg-dark-surface p-6 rounded-xl shadow-md border border-gray-200 dark:border-dark-muted">
+            <h2 className="text-xl font-semibold mb-4 text-gray-800 dark:text-gray-100">
+              Architecture Diagram
+            </h2>
+            <div className="h-[600px] w-full mt-4">
+              <ReactFlowDiagram data={finalizedScope.architecture_diagram} />
+            </div>
           </div>
         ) : finalizedScope?.architecture_diagram ? (
           <div className="bg-white dark:bg-dark-surface p-6 rounded-xl shadow-md border border-gray-200 dark:border-dark-muted">

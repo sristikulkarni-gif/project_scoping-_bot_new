@@ -5,6 +5,7 @@ import { useExport } from "../contexts/ExportContext";
 import { usePrompts } from "../contexts/PromptsContext";
 import projectApi from "../api/projectApi";
 import exportApi, { safeFileName } from "../api/exportApi";
+import ConfidenceGauge from "../components/ConfidenceGauge";
 import {
   FileSpreadsheet,
   FileText,
@@ -32,13 +33,15 @@ pdfjs.GlobalWorkerOptions.workerSrc = workerSrc;
 
 const TABS = [
   { key: "overview", label: "Project Overview", icon: FileText },
-  { key: "gantt", label: "Gantt Timeline", icon: Calendar }, // New Gantt Tab
+  { key: "tech_stack", label: "Tech Stack", icon: FileText },
+  { key: "gantt", label: "Gantt Timeline", icon: Calendar },
   { key: "activities", label: "Activities Breakdown", icon: FileText },
   { key: "resourcing", label: "Resourcing Plan", icon: FileText },
   { key: "architecture", label: "Architecture Diagram", icon: FileText },
   { key: "summary", label: "Summary", icon: FileText },
   { key: "related_case_study", label: "Related Case Study", icon: FileText },
 ];
+
 
 const formatCurrency = (v, currency = "USD") => {
   if (v == null || v === "") return "";
@@ -164,6 +167,7 @@ export default function Exports() {
   });
   const [regenPrompt, setRegenPrompt] = useState("");
   const [regenLoading, setRegenLoading] = useState(false);
+  const regenJustHappenedRef = useRef(false); // prevents auto-refresh from overwriting regen result
   const { prompts, loadPrompts, addPrompt, clearPrompts } = usePrompts();
   const textareaRef = useRef(null);
   useEffect(() => {
@@ -226,7 +230,8 @@ export default function Exports() {
       const result = await regenerateScope(id, parsedDraft, userMsg);
 
       if (result?.scope) {
-        // Update JSON editor with regenerated scope
+        // Set flag BEFORE updating state to block the auto-refresh useEffect
+        regenJustHappenedRef.current = true;
         setJsonText(JSON.stringify(result.scope, null, 2));
         setIsFinalized(false);
         toast.success("Scope regenerated successfully!");
@@ -484,6 +489,11 @@ export default function Exports() {
   // Auto-refresh finalized scope when navigating back to Exports tab
   useEffect(() => {
     const refreshScope = async () => {
+      // Skip if a regeneration just happened — its result is already in jsonText
+      if (regenJustHappenedRef.current) {
+        regenJustHappenedRef.current = false;
+        return;
+      }
       try {
         const latest = await getFinalizedScope(id);
         if (latest && Object.keys(latest).length > 0) {
@@ -505,6 +515,25 @@ export default function Exports() {
     if (!parsedDraft) return;
     try {
       setFinalizing(true);
+
+      // Attempt to capture the React Flow diagram if it's currently rendered
+      try {
+        const flowElement = document.querySelector('.react-flow');
+        if (flowElement) {
+          const { toPng } = await import('html-to-image');
+          // Generate a high-quality capture with white background, skipping UI controls
+          const dataUrl = await toPng(flowElement, {
+            backgroundColor: '#ffffff',
+            pixelRatio: 2,
+            filter: (node) => !node.classList?.contains('react-flow__panel') && !node.classList?.contains('react-flow__controls') && !node.classList?.contains('react-flow__attribution')
+          });
+          parsedDraft.custom_architecture_image = dataUrl;
+          console.log("📸 Captured custom React Flow diagram image");
+        }
+      } catch (imgErr) {
+        console.error("Failed to capture diagram image:", imgErr);
+      }
+
       await finalizeScope(id, parsedDraft);
       toast.success("Scope finalized successfully!");
 
@@ -674,6 +703,27 @@ export default function Exports() {
           <span>Scope finalized successfully! You can now download files.</span>
         </div>
       )}
+
+      {parsedDraft?._warnings && parsedDraft._warnings.length > 0 && (
+        <div className="flex flex-col gap-2 p-4 bg-orange-50 border border-orange-200 text-orange-800 rounded-lg shadow-sm mb-4">
+          <div className="flex items-center gap-2 font-semibold text-orange-900">
+            <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5" viewBox="0 0 20 20" fill="currentColor">
+              <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+            </svg>
+            Industry Benchmark Warnings
+          </div>
+          <ul className="list-disc list-inside space-y-1 ml-1 text-sm">
+            {parsedDraft._warnings.map((warning, idx) => (
+              <li key={idx}>{warning}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      <ConfidenceGauge
+        score={parsedDraft?.confidence_score}
+        reasons={parsedDraft?.confidence_reasons || []}
+      />
       <div className="relative rounded-xl border bg-white dark:bg-gray-900 shadow-inner h-[400px] flex flex-col">
         <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3 scrollbar-thin scrollbar-thumb-emerald-400 scrollbar-track-gray-100">
           {loading ? (

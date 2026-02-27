@@ -21,8 +21,20 @@ from app.utils.ai_clients import (
     get_qdrant_client,
     embed_text_ollama,
     get_azure_client,
+    get_async_azure_client,
+    ollama_chat,
 )
 from app.services.agent_tools import get_rate_cards_async
+from app.engine.diagram_generator import generate_architecture
+from app.engine.document_processor import (
+    extract_text_from_file,
+    extract_text_from_files,
+    extract_document_overview
+)
+from app.engine.prompt_templates import (
+    build_questionnaire_prompt,
+    build_architecture_prompt
+)
 
 
 logger = logging.getLogger(__name__)
@@ -50,37 +62,7 @@ def round_to_half(value: float) -> float:
     rounded = round(value * 2) / 2
     return max(0.5, rounded)  # Minimum 0.5 only for non-zero values
 
-from app.config.config import AZURE_OPENAI_DEPLOYMENT
 
-def ollama_chat(prompt: str, model: str = None, temperature: float = 0.7, format_json: bool = False) -> str:
-    """
-    Generate text using Azure OpenAI (replaces Ollama).
-    Arguments 'model' and 'format_json' are adapted for Azure.
-    """
-    try:
-        client = get_azure_client()
-        
-        # Azure OpenAI Chat Completion
-        messages = [{"role": "user", "content": prompt}]
-        if format_json:
-            # Add system instruction for JSON if needed, or rely on prompt
-            messages.insert(0, {"role": "system", "content": "You are a helpful AI. Please respond in valid JSON format."})
-            
-        logger.info(f"🚀 Calling Azure OpenAI (Model: {AZURE_OPENAI_DEPLOYMENT})...")
-        
-        response = client.chat.completions.create(
-            model=AZURE_OPENAI_DEPLOYMENT, # Use deployment from config
-            messages=messages,
-            temperature=temperature,
-            max_tokens=4096, # Adjust as needed
-            response_format={"type": "json_object"} if format_json else None
-        )
-        
-        return response.choices[0].message.content.strip()
-        
-    except Exception as e:
-        logger.error(f" Azure OpenAI Chat failed: {e}")
-        return ""
 
 
 PROJECTS_BASE = "projects"
@@ -566,150 +548,7 @@ async def get_rate_map_for_project(db: AsyncSession, project) -> Dict[str, float
         logger.warning(f"Failed to fetch rate cards: {e}")
     return ROLE_RATE_MAP
 
-def extract_text_from_file(file_bytes_io: BytesIO, file_name: str) -> str:
-    """
-    Extract text from a file given its bytes and filename.
 
-    Args:
-        file_bytes_io: BytesIO object containing file bytes
-        file_name: Name of the file (used to determine file type)
-
-    Returns:
-        Extracted text content
-    """
-    suffix = os.path.splitext(file_name)[-1].lower()
-    file_bytes = file_bytes_io.read()
-    file_bytes_io.seek(0)  # Reset for potential re-reading
-
-    content = ""
-    try:
-        if suffix == ".pdf":
-            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-                tmp.write(file_bytes)
-                tmp_path = tmp.name
-            try:
-                content = extract_pdf_text(tmp_path)
-            finally:
-                os.remove(tmp_path)
-
-        elif suffix == ".docx":
-            doc = Document(BytesIO(file_bytes))
-            content = "\n".join(p.text for p in doc.paragraphs)
-
-        elif suffix == ".pptx":
-            prs = Presentation(BytesIO(file_bytes))
-            texts = []
-            for slide in prs.slides:
-                for shape in slide.shapes:
-                    if hasattr(shape, "text"):
-                        texts.append(shape.text)
-            content = "\n".join(texts)
-
-        elif suffix in [".xlsx", ".xlsm"]:
-            wb = openpyxl.load_workbook(BytesIO(file_bytes))
-            sheet = wb.active
-            content = "\n".join(
-                " ".join(str(cell) if cell else "" for cell in row)
-                for row in sheet.iter_rows(values_only=True)
-            )
-
-        elif suffix in [".png", ".jpg", ".jpeg", ".tiff"]:
-            img = Image.open(BytesIO(file_bytes))
-            content = pytesseract.image_to_string(img)
-
-        else:
-            # Try as text file
-            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-                tmp.write(file_bytes)
-                tmp_path = tmp.name
-            try:
-                with open(tmp_path, "r", encoding="utf-8", errors="ignore") as fh:
-                    content = fh.read()
-            finally:
-                os.remove(tmp_path)
-
-    except Exception as e:
-        logger.warning(f"Text extraction failed for {file_name}: {e}")
-
-    return content.strip()
-
-# used for extracting text from files from blob 
-#  
-async def _extract_text_from_files(files: List[dict]) -> str:
-    results: List[str] = []
-
-    async def _extract_single(f: dict) -> None:
-        try:
-            blob_bytes = await azure_blob.download_bytes(f["file_path"])
-            suffix = os.path.splitext(f["file_name"])[-1].lower()
-
-            def process_file() -> str:
-                content = ""
-                try:
-                    if suffix == ".pdf":
-                        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-                            tmp.write(blob_bytes)
-                            tmp_path = tmp.name
-                        try:
-                            content = extract_pdf_text(tmp_path)
-                        finally:
-                            os.remove(tmp_path)
-
-                    elif suffix == ".docx":
-                        doc = Document(BytesIO(blob_bytes))
-                        content = "\n".join(p.text for p in doc.paragraphs)
-
-                    elif suffix == ".pptx":
-                        prs = Presentation(BytesIO(blob_bytes))
-                        texts = []
-                        for slide in prs.slides:
-                            for shape in slide.shapes:
-                                if hasattr(shape, "text"):
-                                    texts.append(shape.text)
-                        content = "\n".join(texts)
-
-                    elif suffix in [".xlsx", ".xlsm"]:
-                        wb = openpyxl.load_workbook(BytesIO(blob_bytes))
-                        sheet = wb.active
-                        content = "\n".join(
-                            " ".join(str(cell) if cell else "" for cell in row)
-                            for row in sheet.iter_rows(values_only=True)
-                        )
-
-                    elif suffix in [".png", ".jpg", ".jpeg", ".tiff"]:
-                        img = Image.open(BytesIO(blob_bytes))
-                        content = pytesseract.image_to_string(img)
-
-                    else:
-                        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-                            tmp.write(blob_bytes)
-                            tmp_path = tmp.name
-                        try:
-                            with open(tmp_path, "r", encoding="utf-8", errors="ignore") as fh:
-                                content = fh.read()
-                        finally:
-                            os.remove(tmp_path)
-
-                except Exception as e:
-                    logger.warning(f"Extraction failed for {f['file_name']}: {e}")
-
-                return content.strip()
-
-            text = await anyio.to_thread.run_sync(process_file)
-
-            if text:
-                results.append(text)
-            else:
-                logger.warning(f"Extracted no text from {f['file_name']}")
-
-        except Exception as e:
-            logger.warning(f"Failed to extract {f.get('file_name')} (path={f.get('file_path')}): {e}")
-
-    async with anyio.create_task_group() as tg:
-        for f in files:
-            tg.start_soon(_extract_single, f)
-
-    return "\n\n".join(results)
 
 # 👉 It converts the user’s query into an embedding,
 # 👉 searches similar document chunks in Qdrant,
@@ -718,7 +557,7 @@ async def _extract_text_from_files(files: List[dict]) -> str:
 def _rag_retrieve(query: str, k: int = 5) -> List[Dict]:
     """
     Retrieve semantically similar chunks from Qdrant for RAG.
-    Uses Ollama embedding model and returns list of matched chunks.
+    Uses embedding model and returns list of matched chunks.
     Skips retrieval if no valid embedding found.
     """
     try:
@@ -786,464 +625,54 @@ def _rag_retrieve(query: str, k: int = 5) -> List[Dict]:
         logger.warning(f"RAG retrieval (Qdrant) failed: {e}")
         return []
 
-def _build_scope_prompt(rfp_text: str, kb_chunks: List[str], project=None, questions_context: str | None = None, rate_card_roles: List[str] | None = None) -> str:
-    import tiktoken
-
-    # Tokenizer
-    tokenizer = tiktoken.get_encoding("cl100k_base")
-    # Safe token budget (128k, keep ~4k for completion & system messages)
-    context_limit = 128000
-    max_total_tokens = context_limit - 4000
-    used_tokens = 0
-
-    # Trim RFP text
-    rfp_tokens = tokenizer.encode(rfp_text or "")
-    if len(rfp_tokens) > 3000:
-        rfp_tokens = rfp_tokens[:3000]
-    rfp_text = tokenizer.decode(rfp_tokens)
-    used_tokens += len(rfp_tokens)
-
-    # Trim KB context
-    safe_kb_chunks = []
-    for ch in kb_chunks or []:
-        tokens = tokenizer.encode(ch)
-        if used_tokens + len(tokens) > max_total_tokens:
-            break
-        safe_kb_chunks.append(ch)
-        used_tokens += len(tokens)
-
-    kb_context = "\n\n".join(safe_kb_chunks) if safe_kb_chunks else "(no KB context found)"
-
-    name = (getattr(project, "name", "") or "").strip()
-    domain = (getattr(project, "domain", "") or "").strip()
-    complexity = (getattr(project, "complexity", "") or "").strip()
-    tech_stack = (getattr(project, "tech_stack", "") or "").strip()
-    use_cases = (getattr(project, "use_cases", "") or "").strip()
-    compliance = (getattr(project, "compliance", "") or "").strip()
-    duration = str(getattr(project, "duration", "") or "").strip()
-
-    user_context = (
-        "Some overview fields have been provided by the user.\n"
-        "Treat these user-provided values as the source of truth.\n"
-        "Only fill in fields that are blank — do NOT overwrite the given values.\n\n"
-        f"Project Name: {name or '(infer if missing)'}\n"
-        f"Domain: {domain or '(infer if missing)'}\n"
-        f"Complexity: {complexity or '(infer if missing)'}\n"
-        f"Tech Stack: {tech_stack or '(MUST infer from RFP - see inference rules below)'}\n"
-        f"Use Cases: {use_cases or '(MUST infer from RFP - see inference rules below)'}\n"
-        f"Compliance: {compliance or '(MUST infer from RFP - see inference rules below)'}\n"
-        f"Duration (months): {duration or '(infer if missing)'}\n\n"
-        "**CRITICAL: Inference Rules for Missing Fields**\n"
-        "When Tech Stack, Use Cases, or Compliance are missing, you MUST infer them from the RFP context.\n"
-        "NEVER output 'Not specified in RFP' or 'Not mentioned' - this is UNACCEPTABLE.\n"
-        "ALWAYS make reasonable inferences based on the RFP content.\n\n"
-        "**Tech Stack Inference:**\n"
-        "- Look for explicit technology mentions (Python, Java, React, AWS, Azure, etc.)\n"
-        "- Infer from project type: Web app → React/Node.js, Data Analytics → Python/Spark/SQL, AI/ML → Python/TensorFlow\n"
-        "- Look for database needs → PostgreSQL/MongoDB/MySQL\n"
-        "- Look for cloud/infrastructure mentions → AWS/Azure/GCP\n"
-        "- Look for integration requirements → REST APIs, GraphQL, Kafka, etc.\n"
-        "- Example: If RFP mentions 'data analytics platform' and 'real-time processing', infer 'Python, Apache Spark, Kafka, PostgreSQL, AWS'\n\n"
-        "**Use Cases Inference:**\n"
-        "- Extract main business objectives and user scenarios from RFP\n"
-        "- Look for phrases like 'users should be able to...', 'system will enable...', 'stakeholders can...'\n"
-        "- Identify key features and their purpose\n"
-        "- Example: If RFP describes data ingestion, analytics, and visualization, infer 'Data ingestion from multiple sources, Real-time analytics and reporting, Interactive dashboards for stakeholders'\n\n"
-        "**Compliance Inference:**\n"
-        "- Look for mentions of regulations (GDPR, HIPAA, SOC2, ISO 27001, PCI-DSS)\n"
-        "- Look for data protection, privacy, or security requirements\n"
-        "- Infer from industry: Healthcare → HIPAA, Finance → PCI-DSS, EU customers → GDPR\n"
-        "- Look for audit trails, encryption, access controls\n"
-        "- Example: If RFP mentions 'personal data' and 'EU customers', infer 'GDPR compliance, Data encryption at rest and in transit, Role-based access control'\n\n"
-    )
-
-    today_str = datetime.today().date().isoformat()
-
-    return (
-        "CRITICAL INSTRUCTION: You MUST output ONLY valid JSON. Do NOT include any explanations, commentary, thinking process, or markdown.\n"
-        "Do NOT start with 'Okay' or 'Here is' or any prose. Your ENTIRE response must be valid JSON and nothing else.\n\n"
-        "You are an expert AI project planner.\n"
-        "Use the RFP/project text as the **primary source** \n"
-        "Use questions and answers to clarify ambiguities.\n"
-        "but enrich missing fields with the Knowledge Base context (if relevant).\n\n"
-        "MANDATORY REQUIREMENT: You MUST generate a complete 'activities' array with at least 8-15 activities.\n"
-        "DO NOT generate empty activities array - this is UNACCEPTABLE.\n"
-        "DO NOT return ONLY metadata without activities - this is a CRITICAL ERROR.\n"
-        "The 'activities' array is THE MOST IMPORTANT part of your response.\n\n"
-        "Output schema (YOUR ENTIRE RESPONSE MUST MATCH THIS EXACT FORMAT):\n"
-        "{\n"
-        '  "overview": {\n'
-        '    "Project Name": string,\n'
-        '    "Domain": string,\n'
-        '    "Complexity": string,\n'
-        '    "Tech Stack": string,\n'
-        '    "Use Cases": string,\n'
-        '    "Compliance": string,\n'
-        '    "Duration": number\n'
-        "  },\n"
-        '  "activities": [\n'
-        '    {\n'
-        '      "ID": int,\n'
-        '      "Activities": string,\n'
-        '      "Owner": string | null,\n'
-        '      "Resources": string | null,\n'
-        '      "Start Date": "yyyy-mm-dd",\n'
-        '      "End Date": "yyyy-mm-dd",\n'
-        '      "Effort Months": number\n'
-        "    }\n"
-        "  ],\n"
-        '  "resourcing_plan": [],\n'
-        '  "project_summary": {\n'
-        '    "executive_summary": string,\n'
-        '    "key_deliverables": [string],\n'
-        '    "success_criteria": [string],\n'
-        '    "risks_and_mitigation": [{risk: string, mitigation: string}]\n'
-        "  }\n"
-        "}\n\n"
-        " CRITICAL: The 'activities' array MUST contain at least 8-15 detailed activities covering ALL project phases:\n"
-        "   - Requirements gathering, analysis, and planning activities\n"
-        "   - Design and architecture activities\n"
-        "   - Development activities (broken down by feature/module)\n"
-        "   - Testing activities (unit, integration, UAT)\n"
-        "   - Deployment and go-live activities\n"
-        "   - Post-deployment support activities\n\n"
-        "**CRITICAL: Activity Naming Rules:**\n"
-        "- Activity names MUST describe WHAT is being built (functionality), NOT WHO builds it (seniority)\n"
-        "- NEVER include seniority levels in activity names: [BAD] '(Junior)', '(Senior)', '(Mid-level)'\n"
-        "- Use specific, technical, functional descriptions\n"
-        "- [GOOD]: 'Backend Authentication API', 'Frontend User Dashboard', 'Payment Gateway Integration'\n"
-        "- [GOOD]: 'Database Schema Design', 'RESTful API Endpoints', 'Admin Panel UI Components'\n"
-        "- [BAD]: 'Backend Development (Junior)', 'Frontend Work (Senior)', 'Simple Development Tasks'\n"
-        "- [BAD]: 'Development Phase 1', 'Coding Tasks', 'Advanced Features'\n"
-        "- Break down large activities by FEATURE or MODULE, not by developer seniority\n"
-        "- Example: Instead of 'Backend Development' + 'Backend Development (Junior)', use:\n"
-        "  'Backend Core Services & Business Logic' + 'Backend CRUD API Endpoints'\n\n"
-        "**Project Summary Guidelines:**\n"
-        "- `executive_summary`: 2-3 paragraph high-level summary of project goals, scope, and expected outcomes\n"
-        "- `key_deliverables`: List 5-8 major deliverables (e.g., 'Fully functional mobile app', 'REST API with documentation')\n"
-        "- `success_criteria`: List 4-6 measurable success metrics (e.g., 'System handles 10k concurrent users', 'API response time < 200ms')\n"
-        '- `risks_and_mitigation`: List 4-6 project risks with mitigation strategies as objects with "risk" and "mitigation" fields (e.g., {"risk": "Third-party API downtime", "mitigation": "Implement fallback caching and retry logic"})\n\n'
-        "**CRITICAL: Output ONLY the schema above. Do NOT add:**\n"
-        "- [NO] \"cost_projection\" field (this will be auto-generated from resourcing_plan)\n"
-        "- [NO] Any other fields not listed in the schema above\n"
-        "- [NO] No markdown, no commentary, no explanations — ONLY valid JSON matching the schema\n\n"
-        "Scheduling Rules: \n"
-        f"- The first activity must always start today ({today_str}).\n"
-        "- If two activities are **independent**, overlap their timelines by **70–80%** of their duration (not full overlap)."
-        "- If one activity **depends** on another, allow a small overlap of **10-15%** near the end of the predecessor if feasible."
-        "- Avoid full serialization unless strictly required by dependency."
-        "- Avoid full parallelism where all tasks start together — stagger independent ones by **5-10%**."
-        "- Ensure overall project duration stays **≤ 12 months**."
-        "- Auto-calculate **End Date = Start Date + Effort Months**.\n"
-        "- Auto-calculate **overview.Duration** as the total span in months from the earliest Start Date to the latest End Date.\n"
-        "- `Complexity` should be simple, medium, or high based on duration of project.\n"
-        "\n"
-         "**[CRITICAL]: Owner and Resources Assignment Rules:**\n"
-        "- `Owner` must ALWAYS be a valid JOB ROLE from the company's rate card.\n"
-        "- `Owner` is NEVER an activity name, activity description, or task name.\n"
-        "- `Resources` must ALWAYS contain at least 1-2 supporting JOB ROLES from the company's rate card.\n"
-        "- `Resources` should list supporting team members who assist the Owner (different from Owner).\n"
-        "- You MUST use ONLY the roles listed below - DO NOT invent new roles.\n"
-        "- [WARNING] NEVER leave `Resources` empty or null - ALWAYS assign at least one supporting role.\n"
-        "- For simple activities, assign 1 supporting resource; for complex activities, assign 2-3 resources.\n"
-        "- Example: If Owner is 'Backend Developer', Resources could be 'QA Engineer' or 'DevOps Engineer'.\n"
-        "\n"
-        f"**[MANDATORY]: Use ONLY these exact roles from the company's rate card:**\n"
-        f"{chr(10).join('  - ' + role for role in (rate_card_roles or []))}\n"
-        "\n"
-        "**Examples of CORRECT Owner and Resources assignment:**\n"
-        "  [CORRECT] Activity: 'Backend API Development'\n"
-        f"     Owner: \"{rate_card_roles[0] if (rate_card_roles and len(rate_card_roles) > 0) else 'Unassigned Resource'}\"\n"
-        f"     Resources: \"{rate_card_roles[1] if (rate_card_roles and len(rate_card_roles) > 1) else 'QA Engineer'}, {rate_card_roles[2] if (rate_card_roles and len(rate_card_roles) > 2) else 'DevOps Engineer'}\"\n"
-        "\n"
-        "  [CORRECT] Activity: 'Data Pipeline Development'\n"
-        f"     Owner: \"{rate_card_roles[1] if (rate_card_roles and len(rate_card_roles) > 1) else 'Unassigned Resource'}\"\n"
-        f"     Resources: \"{rate_card_roles[0] if (rate_card_roles and len(rate_card_roles) > 0) else 'Unassigned Resource'}, {rate_card_roles[2] if (rate_card_roles and len(rate_card_roles) > 2) else 'Unassigned Resource'}\"\n"
-        "\n"
-        "  [CORRECT] Activity: 'System Architecture Design'\n"
-        f"     Owner: \"{rate_card_roles[2] if (rate_card_roles and len(rate_card_roles) > 2) else 'Unassigned Resource'}\"\n"
-        f"     Resources: \"{rate_card_roles[0] if (rate_card_roles and len(rate_card_roles) > 0) else 'Unassigned Resource'}\"\n"
-        "\n"
-        "**Examples of INCORRECT assignment (DO NOT DO THIS):**\n"
-        "  [INCORRECT] Owner: \"Infrastructure Setup\" (this is an activity, not a role!)\n"
-        "  [INCORRECT] Owner: \"Data Ingestion Development\" (this is an activity, not a role!)\n"
-        "  [INCORRECT] Resources: \"\" or null (Resources must NEVER be empty!)\n"
-        "  [INCORRECT] Resources: \"Backend Developer\" when Owner is also \"Backend Developer\" (don't duplicate Owner in Resources)\n"
-        "  [INCORRECT] Owner: \"John Smith\" (this is a person's name, not a role!)\n"
-        "\n"    
-        "Activity Duration Guidelines:\n"
-        "Estimate realistic durations based on activity type and complexity. Use these as reference:\n"
-        "\n"
-        "**Planning & Design Activities:**\n"
-        "- Requirements Gathering & Analysis: 0.5-1 month\n"
-        "- System Architecture Design: 0.5-1 month\n"
-        "- UI/UX Design & Wireframing: 0.75-1.5 months\n"
-        "- Database Schema Design: 0.25-0.5 month\n"
-        "- API Design & Documentation: 0.25-0.5 month\n"
-        "\n"
-        "**Development Activities:**\n"
-        "- Simple CRUD Operations: 0.5-0.75 month\n"
-        "- Complex Feature Development: 1-1.5 months\n"
-        "- API Development (REST/GraphQL): 0.75-1.25 months\n"
-        "- Database Implementation: 0.5-1 month\n"
-        "- Authentication & Authorization: 0.75-1.25 months\n"
-        "- Payment Gateway Integration: 1-1.5 months\n"
-        "- Third-Party API Integrations: 0.5-1 month\n"
-        "- Real-time Features (WebSockets, etc.): 1-1.5 months\n"
-        "- Search Functionality: 0.75-1.25 months\n"
-        "- File Upload/Management: 0.5-0.75 month\n"
-        "- Notification System: 0.75-1 month\n"
-        "- Reporting & Analytics: 1-1.5 months\n"
-        "\n"
-        "**AI/ML & Advanced Features:**\n"
-        "- AI Model Integration: 1.5-2 months\n"
-        "- Machine Learning Pipeline: 1.5-2.5 months\n"
-        "- Natural Language Processing: 1.5-2 months\n"
-        "- Computer Vision Features: 1.5-2 months\n"
-        "- Recommendation Engine: 1-1.5 months\n"
-        "\n"
-        "**Testing & Quality Assurance:**\n"
-        "- Unit Testing: 0.25-0.5 month\n"
-        "- Integration Testing: 0.5-0.75 month\n"
-        "- End-to-End Testing: 0.5-1 month\n"
-        "- Performance Testing: 0.5-0.75 month\n"
-        "- Security Testing: 0.75-1 month\n"
-        "- User Acceptance Testing: 0.5-0.75 month\n"
-        "\n"
-        "**DevOps & Deployment:**\n"
-        "- CI/CD Pipeline Setup: 0.5-0.75 month\n"
-        "- Cloud Infrastructure Setup: 0.75-1 month\n"
-        "- Containerization (Docker/K8s): 0.5-1 month\n"
-        "- Monitoring & Logging Setup: 0.5-0.75 month\n"
-        "- Production Deployment: 0.25-0.5 month\n"
-        "\n"
-        "**Domain-Specific Activity Templates:**\n"
-        "\n"
-        "**E-Commerce Domain:**\n"
-        "- Product Catalog Management: 1-1.5 months\n"
-        "- Shopping Cart & Checkout: 1.25-1.75 months\n"
-        "- Order Management System: 1-1.5 months\n"
-        "- Inventory Management: 1-1.5 months\n"
-        "- Payment Processing: 1-1.5 months\n"
-        "- Shipping Integration: 0.75-1 month\n"
-        "\n"
-        "**Healthcare Domain:**\n"
-        "- Patient Management System: 1.5-2 months\n"
-        "- Electronic Health Records (EHR): 2-2.5 months\n"
-        "- Appointment Scheduling: 1-1.5 months\n"
-        "- Medical Billing: 1.5-2 months\n"
-        "- HIPAA Compliance Implementation: 1-1.5 months\n"
-        "- Telemedicine Features: 1.5-2 months\n"
-        "\n"
-        "**FinTech Domain:**\n"
-        "- Account Management: 1.5-2 months\n"
-        "- Transaction Processing: 1.5-2 months\n"
-        "- KYC/AML Compliance: 1.5-2 months\n"
-        "- Fraud Detection System: 1.5-2.5 months\n"
-        "- Financial Reporting: 1-1.5 months\n"
-        "- Multi-Currency Support: 1-1.5 months\n"
-        "\n"
-        "**Education Domain:**\n"
-        "- Learning Management System (LMS): 2-2.5 months\n"
-        "- Course Management: 1-1.5 months\n"
-        "- Student Portal: 1-1.5 months\n"
-        "- Assessment & Grading: 1-1.5 months\n"
-        "- Video Streaming Integration: 1-1.5 months\n"
-        "- Certificate Generation: 0.5-0.75 month\n"
-        "\n"
-        "**Social Media/Community Domain:**\n"
-        "- User Profiles & Authentication: 1-1.5 months\n"
-        "- Feed/Timeline System: 1.5-2 months\n"
-        "- Content Posting & Sharing: 1-1.5 months\n"
-        "- Messaging/Chat System: 1.5-2 months\n"
-        "- Notifications System: 0.75-1.25 months\n"
-        "- Content Moderation: 1-1.5 months\n"
-        "\n"
-        "**IoT/Smart Systems Domain:**\n"
-        "- Device Management: 1.5-2 months\n"
-        "- Real-time Data Processing: 1.5-2 months\n"
-        "- Sensor Data Analytics: 1.5-2 months\n"
-        "- Remote Control Interface: 1-1.5 months\n"
-        "- Alert & Automation System: 1-1.5 months\n"
-        "\n"
-        "**General Guidelines:**\n"
-        "- For simple projects: Use lower end of duration ranges\n"
-        "- For medium projects: Use mid-range durations\n"
-        "- For complex projects: Use upper end or slightly beyond ranges\n"
-        "- Activities can be split into smaller sub-activities if duration exceeds 2 months\n"
-        "- Total project duration should realistically reflect the sum of critical path activities\n"
-        "- Consider dependencies when scheduling - dependent activities should account for handoff time\n"
-        "\n"
-        "**[CRITICAL]: Infrastructure & Setup Activities - Use SHORT Durations!**\n"
-        "Infrastructure and environment setup tasks are typically QUICK (1-2 weeks, NOT 1 month):\n"
-        "- Azure/AWS/Cloud Infrastructure Setup: 0.25-0.5 month (1-2 weeks)\n"
-        "- Database Environment Setup: 0.25-0.5 month (1-2 weeks)\n"
-        "- CI/CD Pipeline Configuration: 0.25-0.5 month (1-2 weeks)\n"
-        "- Development Environment Setup: 0.25 month (1 week)\n"
-        "- Kubernetes/Container Setup: 0.5 month (2 weeks)\n"
-        "- Monitoring & Logging Tools Setup: 0.25-0.5 month (1-2 weeks)\n"
-        "\n"
-        "**IMPORTANT: Use Granular Durations - NOT Everything is 1 Month!**\n"
-        "Use realistic, varied durations based on actual effort required:\n"
-        "- 0.25 month = 1 week (quick setup, configuration, simple tasks)\n"
-        "- 0.5 month = 2 weeks (moderate complexity, integration work)\n"
-        "- 0.75 month = 3 weeks (moderate to complex features)\n"
-        "- 1 month = 4 weeks (complex features, major development)\n"
-        "- 1.25-1.5 months = 5-6 weeks (very complex features, multiple integrations)\n"
-        "- 1.75-2 months = 7-8 weeks (large system components, AI/ML work)\n"
-        "\n"
-        "**Activity Duration Examples (Realistic Estimates):**\n"
-        "\n"
-        "Example 1 - Infrastructure Setup:\n"
-        "  Activity: \"Set up Azure infrastructure with SQL DB and monitoring\"\n"
-        "  Duration: 0.5 month (2 weeks) ✓\n"
-        "  NOT: 1 month ✗\n"
-        "\n"
-        "Example 2 - Data Source Analysis:\n"
-        "  Activity: \"Analyze 30+ data sources and define integration approach\"\n"
-        "  Duration: 0.75 month (3 weeks) ✓\n"
-        "  NOT: 1 month ✗\n"
-        "\n"
-        "Example 3 - Simple ETL Pipeline:\n"
-        "  Activity: \"Develop ETL pipeline for SQL database ingestion\"\n"
-        "  Duration: 0.75 month (3 weeks) ✓\n"
-        "  NOT: 1 month ✗\n"
-        "\n"
-        "Example 4 - Complex Feature:\n"
-        "  Activity: \"Implement ML-based fraud detection system\"\n"
-        "  Duration: 1.5-2 months (6-8 weeks) ✓\n"
-        "\n"
-        "Example 5 - Testing Phase:\n"
-        "  Activity: \"Execute end-to-end testing and UAT\"\n"
-        "  Duration: 0.5 month (2 weeks) ✓\n"
-        "  NOT: 1 month ✗\n"
-        "\n"
-        "**Remember:** Most activities take LESS than 1 month! Use 0.25, 0.5, 0.75 frequently!\n"
-        "\n"
-        "- IDs must start from 1 and increment sequentially.\n"
-        "- If the RFP or Knowledge Base text lacks detail, infer the missing pieces logically.\n"
-        "- Include all relevant roles and activities that ensure delivery of the project scope.\n"
-        "- Keep all field names exactly as in the schema.\n\n"
-        "**🔴 OVERRIDE RULE:** If the user specifies a duration (e.g. '3 months'), you MUST output that EXACT duration.\n"
-        "IGNORE the 'Activity Duration Guidelines' above for that specific activity.\n"
-        "Do NOT round it down. Do NOT make it 'realistic'. Just obey the user.\n"
-        "\n"
-        "**🔴 CONTINUOUS LEARNING RULE (ACTUALS):**\n"
-        "If the 'Knowledge Base Context' contains text tagged as 'ACTUAL_DATA' or 'PROJECT CLOSEOUT REPORT', it is HIGH PRIORITY.\n"
-        "- Real actuals from past projects are better than templates.\n"
-        "- If an Actual Report says 'Activity X took 50 hours', and your template says 20, USE 50 (or close to it).\n"
-        "- Cite '(Based on actuals from Project ...)' in the activity notes if possible.\n"
-        f"{user_context}"
-        f"RFP / Project Files Content:\n{rfp_text[:8000]}... [TRUNCATED for Memory Safety]\n\n"
-        f"Knowledge Base Context (for enrichment only):\n{str(kb_context)[:2000]}... [TRUNCATED]\n"
-        f"Clarification Q&A (User-confirmed answers take ABSOLUTE PRIORITY)\n"
-        f"Use these answers to OVERRIDE any ambiguous or conflicting information.\n"
-        f"Example: If user says 'Change Frontend to 3 months', you MUST set 'Effort Months' to 3.0 for that activity.\n"
-        f"Example: If user says 'Add mobile app', you MUST add mobile app activities.\n"
-        f"Do NOT ignore these user commands.\n\n"
-        f"{questions_context}\n\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "🚨 FINAL CRITICAL REQUIREMENTS - READ THIS CAREFULLY:\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "1. ✅ MUST include 'overview' object with all 7 fields\n"
-        "2. ✅ MUST include 'activities' array with at least 8-15 activities (THIS IS MANDATORY!)\n"
-        "3. ✅ MUST include 'resourcing_plan' as empty array []\n"
-        "4. ✅ MUST include 'project_summary' object with all 4 fields\n"
-        "5. ❌ PROHIBITED: Returning empty 'activities' array []. You MUST generate at least 5 activities.\n"
-        "6. ❌ DO NOT nest activities inside 'phases' - put them directly in 'activities' array\n"
-        "7. ❌ DO NOT wrap the response in 'data' or 'project' keys - use the exact schema above\n"
-        "6. ❌ DO NOT nest activities inside 'phases' - put them directly in 'activities' array\n"
-        "7. ❌ DO NOT wrap the response in 'data' or 'project' keys - use the exact schema above\n"
-        "8. 🎯 Your response MUST be valid JSON that starts with '{' and ends with '}'\n\n"
-        "REMEMBER: Output ONLY the JSON object. No explanations, no thinking, no markdown, no prose. Start your response with '{' and end with '}'. Nothing else.\n"
-    )
-
-
-def _build_questionnaire_prompt(rfp_text: str, kb_chunks: List[str], project=None) -> str:
+def _retrieve_past_proposals(rfp_text: str, k: int = 3) -> list[dict]:
     """
-    Build a prompt that forces the model to infer categories dynamically from RFP context.
+    Retrieve semantically similar past proposals from Qdrant to use as few-shot calibration examples in prompts.
     """
-    name = getattr(project, "name", "Unnamed Project")
-    domain = getattr(project, "domain", "General")
-    tech = getattr(project, "tech_stack", "Modern Web Stack")
-    compliance = getattr(project, "compliance", "General")
-    duration = getattr(project, "duration", "TBD")
+    try:
+        from app.utils.ai_clients import embed_text_azure
+        # Embed the query, limit to avoid token limit errors
+        q_emb_list = embed_text_azure([rfp_text[:5000]])
+        
+        if not q_emb_list or not q_emb_list[0]:
+            return []
+            
+        q_emb = q_emb_list[0]
+        
+        client = get_qdrant_client()
+        PAST_PROPOSALS_COLLECTION = os.getenv("PAST_PROPOSALS_COLLECTION", "past_proposals")
+        
+        search_result = client.query_points(
+            collection_name=PAST_PROPOSALS_COLLECTION,
+            query=q_emb,
+            limit=k,
+            with_payload=True
+        )
+        
+        results = []
+        for r in search_result.points:
+            payload = r.payload or {}
+            metadata_str = payload.get("metadata", "{}")
+            try:
+                metadata = json.loads(metadata_str)
+            except Exception:
+                metadata = {}
+                
+            results.append({
+                "client_name": metadata.get("client_name", "Unknown"),
+                "domain": metadata.get("domain", "Unknown"),
+                "duration_months": metadata.get("duration_months", 0),
+                "team_size": metadata.get("team_size", 0),
+                "total_cost": metadata.get("total_cost", 0),
+                "summary": payload.get("chunk", "")
+            })
+            
+        return results
+    except Exception as e:
+        logger.warning(f"Past proposals retrieval failed: {e}")
+        return []
 
-    return f"""
-You are a **senior business analyst** preparing a requirement-clarification questionnaire
-based on an RFP document.
 
-Your goal: identify the main THEMES and subareas discussed in the RFP or Knowledge Base,
-and then create **categories of questions** that align with those themes.
-Do NOT reuse example categories blindly — derive them from the content itself.
-
----
-
-### Project Context
-- Project Name: {name}
-- Domain: {domain}
-- Tech Stack: {tech}
-- Compliance: {compliance}
-- Duration: {duration}
-
-### RFP Content
-{rfp_text[:8000]}... [TRUNCATED for Memory Safety]
-
-### Knowledge Base Context
-{str(kb_chunks)[:2000]}... [TRUNCATED]
-
----
-
-### TASK
-1. First, analyze the RFP text to identify **key themes or topics** (e.g., Data Governance, SOX Controls,
-   Cloud Migration, AI Enablement, Supply Chain Optimization, etc.).
-2. For each theme, create a **category** with 5-6 specific questions.
-3. Questions should clarify requirements, assumptions, or current-state processes.
-4. Avoid repeating generic categories like "Architecture" or "Data & Security"
-   unless they are explicitly discussed in the RFP.
-
----
-
-### OUTPUT FORMAT
-Return ONLY valid JSON in this structure:
-
-{{
-  "questions": [
-    {{
-      "category": "Data Governance & Ownership",
-      "items": [
-        {{
-          "question": "Is there a defined data ownership model for finance data?",
-          "user_understanding": "",
-          "comment": ""
-        }},
-        {{
-          "question": "Do you maintain audit logs for data corrections?",
-          "user_understanding": "",
-          "comment": ""
-        }}
-      ]
-    }},
-    {{
-      "category": "Regulatory Readiness and SOX Scope",
-      "items": [
-        {{
-          "question": "What parts of the organization are in SOX scope?",
-          "user_understanding": "",
-          "comment": ""
-        }}
-      ]
-    }}
-  ]
-}}
-
-### RULES
-- Categories must emerge logically from the RFP and KB text.
-- Each category must contain at least 2 context-relevant questions.
-- Each question must be concise, unambiguous, and require a short descriptive answer.
-- Always include empty strings for 'user_understanding' and 'comment'.
-- Output ONLY valid JSON (no explanations or markdown).
-"""
 
 def _extract_questions_from_text(raw_text: str) -> list[dict]:
     try:
@@ -1322,34 +751,7 @@ def _extract_questions_from_text(raw_text: str) -> list[dict]:
 
     return [{"category": c, "items": lst} for c, lst in grouped.items()]
 
-def _extract_document_overview(full_text: str, max_chars: int = 10000) -> str:
-    """
-    Extract the beginning of document as overview to avoid sending entire large document.
-    This typically includes executive summary, objectives, and high-level scope.
 
-    Args:
-        full_text: Complete document text
-        max_chars: Maximum characters to extract (default 10000 = ~2500 words)
-
-    Returns:
-        Document overview text
-    """
-    if not full_text:
-        return ""
-
-    # If document is small enough, return as-is
-    if len(full_text) <= max_chars:
-        return full_text
-
-    # Extract first portion
-    overview = full_text[:max_chars]
-
-    # Try to cut at a sentence boundary to avoid mid-sentence truncation
-    last_period = overview.rfind('. ')
-    if last_period > max_chars * 0.8:  # If we can find a period in last 20%
-        overview = overview[:last_period + 1]
-
-    return overview
 
 def _retrieve_relevant_sections_by_aspects(project_name: str, aspects: List[str], k: int = 2) -> List[str]:
     """
@@ -1399,7 +801,7 @@ async def generate_project_questions(db: AsyncSession, project) -> dict:
         if getattr(project, "files", None):
             files = [{"file_name": f.file_name, "file_path": f.file_path} for f in project.files]
             if files:
-                rfp_text = await _extract_text_from_files(files)
+                rfp_text = await extract_text_from_files(files)
     except Exception as e:
         logger.warning(f"Failed to extract RFP for questions: {e}")
 
@@ -1409,7 +811,7 @@ async def generate_project_questions(db: AsyncSession, project) -> dict:
 
     if rfp_text:
         # Extract document overview (first ~2500 words) instead of entire document
-        rfp_overview = _extract_document_overview(rfp_text, max_chars=10000)
+        rfp_overview = extract_document_overview(rfp_text, max_chars=10000)
         logger.info(f"📄 Extracted RFP overview: {len(rfp_overview)} chars (from {len(rfp_text)} total chars)")
 
         # Define key aspects to query for relevant sections
@@ -1447,7 +849,7 @@ async def generate_project_questions(db: AsyncSession, project) -> dict:
     kb_chunks = [ch["content"] for group in kb_results for ch in group["chunks"]][:5] if kb_results else []
 
     # ---------- Build prompt with focused content ----------
-    prompt = _build_questionnaire_prompt(focused_rfp_content, kb_chunks, project)
+    prompt = build_questionnaire_prompt(focused_rfp_content, kb_chunks, project)
 
     # ---------- Query Ollama ----------
     try:
@@ -1535,688 +937,10 @@ async def update_questions_with_user_input(
         return {}
 
     
-def _build_architecture_prompt(rfp_text: str, kb_chunks: List[str], project=None) -> str:
-    name = (getattr(project, "name", "") or "Untitled Project").strip()
-    domain = (getattr(project, "domain", "") or "General").strip()
-    tech = (getattr(project, "tech_stack", "") or "Modern Web + Cloud Stack").strip()
 
-    return f"""
-    You are a **senior enterprise solution architect**. Your task is to design a logical system architecture for the project described below.
-    Instead of drawing the diagram, you must define the **structure components and connections** in a strict JSON format.
 
-    ### PROJECT CONTEXT
-    - **Project Name:** {name}
-    - **Domain:** {domain}
-    - **Tech Stack:** {tech}
 
-    ### RFP SUMMARY
-    {rfp_text}
 
-    ### KNOWLEDGE BASE CONTEXT
-    {kb_chunks}
-
-    ---
-
-    ### INSTRUCTIONS
-    1. Identify key components based on the RFP and Tech Stack.
-    2. Group them into these standard layers:
-       - **frontend**: User interfaces (Web, Mobile, Admin Panels)
-       - **backend**: Application logic, APIs, Microservices, Auth
-       - **data**: Databases, File Storage, Caching, Data Warehouses
-       - **ai**: AI Models, ML Pipelines, Analytics Engines
-       - **security**: Firewalls, Identity Providers, Monitoring, CI/CD tools
-    3. Define logical data flow connections (A -> B).
-
-    ### OUTPUT FORMAT (JSON ONLY)
-    Return a single valid JSON object with this schema:
-    {{
-      "frontend": [
-        {{"label": "Detailed Name", "tech": "React/Flutter/etc"}},
-        ...
-      ],
-      "backend": [
-        {{"label": "Detailed Name", "tech": "FastAPI/Node/etc"}}
-      ],
-      "data": [
-        {{"label": "Detailed Name", "tech": "Postgres/Redis/etc"}}
-      ],
-      "ai": [
-        {{"label": "Detailed Name", "tech": "OpenAI/PyTorch/etc"}}
-      ],
-      "security": [
-        {{"label": "Detailed Name", "tech": "Auth0/Prometheus/etc"}}
-      ],
-      "connections": [
-        {{"from": "Frontend Label", "to": "Backend Label", "label": "HTTP/REST"}},
-        {{"from": "Backend Label", "to": "Data Label", "label": "SQL"}}
-      ]
-    }}
-
-    **RULES**:
-    - Use EXPLICIT labels that match exactly in "connections".
-    - "label" should be short (e.g. "Core API", not "The core api server").
-    - "tech" is optional detail text.
-    - Omit empty layers if not applicable.
-    """
-
-
-
-def _generate_dot_from_json(arch_data: dict) -> str:
-    """
-    Convert the structured architecture JSON into a strict, well-formatted DOT string.
-    Enforces layout, colors, and clustering.
-    """
-    
-    # --- Style Configuration ---
-    C_FRONTEND = "#E3F2FD"
-    C_BACKEND = "#E8F5E9"
-    C_DATA = "#FFFDE7"
-    C_AI = "#F3E5F5"
-    C_SECURITY = "#ECEFF1"
-    
-    dot_lines = [
-        'digraph Architecture {',
-        '    rankdir=TB;',
-        '    splines=ortho;',
-        '    nodesep=0.8;',
-        '    ranksep=1.0;',
-        # Global graph settings
-        '    graph [dpi=200, bgcolor="white", fontname="Arial"];',
-        # Global node settings
-        '    node [style="filled,rounded", shape=box, fontname="Arial", fontsize=12, penwidth=1.2];',
-        # Global edge settings
-        '    edge [color="#607D8B", penwidth=1.5, arrowsize=0.8, fontname="Arial", fontsize=10];',
-        ''
-    ]
-    
-    # Helper to clean labels for IDs
-    def make_id(label):
-        s = re.sub(r'[^a-zA-Z0-9]', '_', str(label)).strip('_')
-        if not s: return "node_unknown"
-        if s[0].isdigit(): s = "N" + s
-        return s
-
-    def escape_html(text):
-        if not text: return ""
-        return (str(text)
-            .replace("&", "&amp;")
-            .replace("<", "&lt;")
-            .replace(">", "&gt;")
-            .replace('"', "&quot;")
-            .replace("'", "&apos;"))
-
-    def add_cluster(name, label, color, items):
-        if not items: return
-        dot_lines.append(f'    subgraph cluster_{name} {{')
-        dot_lines.append(f'        label="{label}";')
-        dot_lines.append(f'        style="filled,rounded";')
-        dot_lines.append(f'        fillcolor="{color}";')
-        dot_lines.append(f'        fontsize=13;')
-        
-        for item in items:
-            lbl_raw = item.get("label", "Unknown")
-            tech_raw = item.get("tech", "")
-            
-            node_id = make_id(lbl_raw)
-            lbl = escape_html(lbl_raw)
-            tech = escape_html(tech_raw)
-            
-            # HTML-like label for rich text
-            # Note: Graphviz HTML labels must be enclosed in <...>
-            if tech:
-                full_label = f'<{lbl}<BR/><FONT POINT-SIZE="10" COLOR="#555555">{tech}</FONT>>'
-            else:
-                full_label = f'"{lbl}"'
-            
-            # Shape mapping based on layer
-            shape = "box"
-            if name == "backend": shape = "component" 
-            elif name == "data": shape = "cylinder" 
-            elif name == "ai": shape = "ellipse"
-            elif name == "security": shape = "diamond"
-            
-            # Use 'white' for node background to contrast with cluster color
-            dot_lines.append(f'        {node_id} [label={full_label}, shape={shape}, fillcolor="white"];')
-            
-        dot_lines.append('    }')
-        dot_lines.append('')
-
-    # --- Build Clusters ---
-    add_cluster("frontend", "Frontend & Channels", C_FRONTEND, arch_data.get("frontend", []))
-    add_cluster("backend", "Backend Services & API", C_BACKEND, arch_data.get("backend", []))
-    add_cluster("data", "Data persistence & Storage", C_DATA, arch_data.get("data", []))
-    add_cluster("ai", "AI Models & Analytics", C_AI, arch_data.get("ai", []))
-    add_cluster("security", "Security & DevOps", C_SECURITY, arch_data.get("security", []))
-
-    # --- Build Connections ---
-    connections = arch_data.get("connections", [])
-    seen_edges = set()
-    
-    for conn in connections:
-        src_lbl = conn.get("from", "")
-        dst_lbl = conn.get("to", "")
-        lbl = conn.get("label", "")
-        
-        src = make_id(src_lbl)
-        dst = make_id(dst_lbl)
-        
-        if src and dst and src != dst:
-            edge_key = f"{src}->{dst}"
-            if edge_key not in seen_edges:
-                label_attr = f' [label="{lbl}"]' if lbl else ''
-                dot_lines.append(f'    {src} -> {dst}{label_attr};')
-                seen_edges.add(edge_key)
-
-    dot_lines.append('}')
-    return "\n".join(dot_lines)
-
-
-def _build_eraser_architecture_prompt(rfp_text: str, kb_chunks: List[str], project=None) -> str:
-    """
-    Build prompt for Eraser.io DSL architecture diagram generation.
-    Focuses on using EXACT tech stack from RFP.
-    """
-    name = (getattr(project, "name", "") or "Untitled Project").strip()
-    domain = (getattr(project, "domain", "") or "General").strip()
-    tech = (getattr(project, "tech_stack", "") or "Modern Web + Cloud Stack").strip()
-
-    # Convert tech_stack string to list if needed
-    tech_list = []
-    if tech:
-        if isinstance(tech, str):
-            # Split by common delimiters
-            tech_list = [t.strip() for t in re.split(r'[,;|]', tech) if t.strip()]
-        elif isinstance(tech, list):
-            tech_list = tech
-
-    tech_list_str = "\n".join(f"  - {t}" for t in tech_list) if tech_list else "  - (No specific tech stack provided)"
-
-    return f"""
-    You are a **senior cloud architect** creating an **Eraser.io architecture diagram**.
-
-    ### PROJECT CONTEXT
-    - **Project Name:** {name}
-    - **Domain:** {domain}
-    - **Tech Stack (CRITICAL - USE THESE EXACT TECHNOLOGIES):**
-{tech_list_str}
-
-    ### RFP SUMMARY
-    {rfp_text}
-
-    ### KNOWLEDGE BASE CONTEXT
-    {kb_chunks}
-
-    ---
-
-    ### TASK
-    Generate **Eraser.io DSL syntax** for a cloud architecture diagram.
-
-    **CRITICAL REQUIREMENTS:**
-    1. **USE ONLY THE TECH STACK LISTED ABOVE** - Do NOT invent or add technologies not in the tech stack
-    2. Each technology from the tech stack MUST appear as a node in the diagram
-    3. Use appropriate cloud icons for each technology
-    4. Show logical data flows and connections
-    5. Group related components together
-
-    ---
-
-    ### ERASER.IO DSL SYNTAX RULES
-
-    **Nodes:**
-    ```
-    NodeName [icon: icon-name, color: color-name]
-    ```
-
-    **Groups (containers):**
-    ```
-    GroupName {{
-      Node1 [icon: aws-lambda]
-      Node2 [icon: aws-s3]
-    }}
-    ```
-
-    **Connections (arrows):**
-    ```
-    Node1 > Node2
-    Node1 > Node2, Node3, Node4
-    ```
-
-    **Available Cloud Icons:**
-    - **Azure:** azure-functions, azure-blob-storage, azure-sql-database, azure-cosmos-db, azure-app-service, azure-api-management, azure-data-factory, azure-databricks, azure-synapse-analytics, azure-power-bi, azure-devops, azure-kubernetes-service, azure-virtual-machines
-    - **AWS:** aws-lambda, aws-s3, aws-rds, aws-dynamodb, aws-ec2, aws-api-gateway, aws-ecs, aws-eks, aws-cloudfront, aws-sqs, aws-sns
-    - **GCP:** gcp-cloud-functions, gcp-cloud-storage, gcp-cloud-sql, gcp-firestore, gcp-compute-engine, gcp-kubernetes-engine
-    - **General:** database, server, cloud, api, monitor, tool, globe
-
-    ---
-
-    ### DOMAIN-SPECIFIC PATTERNS (Use if matching domain)
-
-    - **Data Analytics/BI:** ETL Pipeline, Data Lake, Data Warehouse, BI Dashboard, Analytics Engine
-    - **FinTech:** Payment Gateway, Fraud Detection, KYC Service, Transaction DB, Ledger
-    - **HealthTech:** Patient Portal, EHR System, FHIR API, Compliance Layer
-    - **AI/ML:** Model API, Training Pipeline, Feature Store, Model Registry
-    - **E-Commerce:** Product Catalog, Shopping Cart, Payment Processor, Order Management
-
-    ---
-
-    ### OUTPUT RULES (CRITICAL!)
-
-    **YOUR RESPONSE MUST:**
-    1. Start immediately with node/group definitions (no explanatory text)
-    2. Use ONLY technologies from the tech stack provided above
-    3. Be pure Eraser.io DSL syntax
-    4. NOT include markdown, commentary, or explanations
-    5. Map each tech stack item to appropriate cloud icon
-
-    **WRONG (Do NOT do this):**
-    ```
-    Based on the analysis, here's the architecture:
-    VPC {{ ... }}
-    ```
-
-    **CORRECT (Do this):**
-    ```
-    Cloud Infrastructure {{
-      Azure Data Factory [icon: azure-data-factory, color: blue]
-      Azure Databricks [icon: azure-databricks, color: orange]
-    }}
-
-    Azure Data Factory > Azure Databricks
-    ```
-
-    **TECH STACK MAPPING EXAMPLES:**
-    - "Azure Data Factory" → `Azure Data Factory [icon: azure-data-factory]`
-    - "Power BI" → `Power BI Dashboard [icon: azure-power-bi]`
-    - "Azure SQL Database" → `Azure SQL DB [icon: azure-sql-database]`
-    - "Kubernetes" → `Kubernetes Cluster [icon: azure-kubernetes-service]`
-    - "React" → `React Frontend [icon: react]`
-    - "Node.js" → `Node.js API [icon: nodejs]`
-
-    **Remember:** Your output must be **PURE Eraser.io DSL** with NO additional text!
-    """
-
-
-async def _call_eraser_api(dsl_code: str) -> tuple[str | None, str | None]:
-    """
-    Call Eraser.io API to render architecture diagram.
-    Returns: (image_url, editor_url) tuple or (None, None) on failure
-    """
-    from app.config.config import ERASER_IO_API_KEY, ERASER_IO_API_URL
-
-    if not ERASER_IO_API_KEY:
-        logger.warning("⚠️ ERASER_IO_API_KEY not configured - skipping Eraser.io diagram generation")
-        return None, None
-
-    headers = {
-        "Authorization": f"Bearer {ERASER_IO_API_KEY}",
-        "Content-Type": "application/json"
-    }
-
-    payload = {
-        "theme": "light",
-        "background": True,
-        "elements": [
-            {
-                "type": "diagram",
-                "diagramType": "cloud-architecture-diagram",
-                "code": dsl_code
-            }
-        ]
-    }
-
-    try:
-        logger.info(f"🎨 Calling Eraser.io API to render architecture diagram...")
-        response = await anyio.to_thread.run_sync(
-            lambda: requests.post(ERASER_IO_API_URL, headers=headers, json=payload, timeout=30)
-        )
-
-        if response.status_code == 200:
-            result = response.json()
-            image_url = result.get("imageUrl")
-            editor_url = result.get("createEraserFileUrl")
-            logger.info(f"✅ Eraser.io diagram generated successfully: {image_url}")
-            return image_url, editor_url
-        else:
-            logger.error(f"❌ Eraser.io API error: {response.status_code} - {response.text}")
-            return None, None
-
-    except Exception as e:
-        logger.error(f"❌ Eraser.io API call failed: {e}")
-        return None, None
-
-
-async def generate_architecture_eraser(
-    db: AsyncSession,
-    project,
-    rfp_text: str,
-    kb_chunks: List[str],
-    blob_base_path: str,
-) -> tuple[models.ProjectFile | None, str]:
-    """
-    Generate architecture diagram using Eraser.io API.
-    Downloads PNG from Eraser.io and stores in Azure Blob.
-    Falls back to Graphviz if Eraser.io is not configured or fails.
-    """
-    from app.config.config import ERASER_IO_API_KEY
-
-    # Check if Eraser.io is configured
-    if not ERASER_IO_API_KEY:
-        logger.info("📊 Eraser.io not configured - using Graphviz fallback")
-        return await generate_architecture(db, project, rfp_text, kb_chunks, blob_base_path)
-
-    prompt = _build_eraser_architecture_prompt(rfp_text, kb_chunks, project)
-
-    # Step 1: Generate Eraser.io DSL from LLM
-    async def _generate_dsl_from_ai(retry: int = 0) -> str:
-        """Call Ollama to generate Eraser.io DSL."""
-        try:
-            return await anyio.to_thread.run_sync(lambda: ollama_chat(prompt, temperature=0.7))
-        except Exception as e:
-            if retry < 2:
-                logger.warning(f"Ollama call failed (retry {retry+1}/3): {e}")
-                await anyio.sleep(2)
-                return await _generate_dsl_from_ai(retry + 1)
-            logger.error(f"Ollama DSL generation failed after retries: {e}")
-            return ""
-
-    dsl_code = await _generate_dsl_from_ai()
-    if not dsl_code:
-        logger.warning("⚠️ No DSL code returned by AI - using Graphviz fallback")
-        return await generate_architecture(db, project, rfp_text, kb_chunks, blob_base_path)
-
-    # Step 2: Clean DSL code
-    dsl_code = re.sub(r"```[a-zA-Z]*", "", dsl_code).replace("```", "").strip()
-    dsl_code = dsl_code.strip("`").strip()
-
-    logger.info(f"📝 Generated Eraser.io DSL ({len(dsl_code)} chars)")
-
-    # Step 3: Call Eraser.io API
-    image_url, editor_url = await _call_eraser_api(dsl_code)
-
-    if not image_url:
-        logger.warning("⚠️ Eraser.io rendering failed - using Graphviz fallback")
-        return await generate_architecture(db, project, rfp_text, kb_chunks, blob_base_path)
-
-    # Step 4: Download PNG from Eraser.io
-    try:
-        logger.info(f"📥 Downloading diagram from Eraser.io: {image_url}")
-        png_response = await anyio.to_thread.run_sync(
-            lambda: requests.get(image_url, timeout=30)
-        )
-        png_response.raise_for_status()
-        png_bytes = png_response.content
-
-        # Step 5: Upload to Azure Blob
-        blob_name_png = f"{blob_base_path}/architecture_eraser_{project.id}.png"
-        await azure_blob.upload_bytes(blob_name_png, png_bytes, content_type="image/png")
-        logger.info(f"✅ Uploaded Eraser.io diagram to Azure: {blob_name_png}")
-
-        # Step 6: Store in database
-        db_file = models.ProjectFile(
-            project_id=project.id,
-            file_name=f"architecture_eraser_{project.id}.png",
-            file_path=blob_name_png,
-            file_type="image/png",
-        )
-        db.add(db_file)
-        await db.commit()
-        await db.refresh(db_file)
-
-        logger.info(f"✅ Eraser.io architecture diagram stored for project {project.id}: {blob_name_png}")
-        return db_file, blob_name_png
-
-    except Exception as e:
-        logger.error(f"❌ Failed to download/store Eraser.io diagram: {e}")
-        logger.info("⚠️ Falling back to Graphviz")
-        return await generate_architecture(db, project, rfp_text, kb_chunks, blob_base_path)
-
-
-async def _generate_fallback_architecture(
-    db: AsyncSession,
-    project,
-    blob_base_path: str
-) -> tuple[models.ProjectFile | None, str]:
-    """
-    Generate and upload a default fallback architecture diagram (4-layer generic layout).
-    Triggered when Ollama or Graphviz generation fails.
-    """
-    logger.warning(" Using fallback default architecture layout")
-
-    # --- Default DOT diagram ---
-    fallback_dot = """
-digraph Architecture {
-    rankdir=TB;
-    graph [dpi=200, bgcolor="white", nodesep=0.8, ranksep=1.0, splines=ortho];
-    node [style="rounded,filled", fontname="Helvetica-Bold", fontsize=13, penwidth=1.2];
-
-    subgraph cluster_frontend {
-        label="Frontend / User Touchpoints";
-        style="filled,rounded"; fillcolor="#E3F2FD";
-        web[label="Web App (React / Angular)", shape=box, fillcolor="#BBDEFB"];
-        mobile[label="Mobile App", shape=box, fillcolor="#BBDEFB"];
-    }
-
-    subgraph cluster_backend {
-        label="Backend / Services";
-        style="filled,rounded"; fillcolor="#E8F5E9";
-        api[label="Core API (FastAPI / Node.js)", shape=box3d, fillcolor="#C8E6C9"];
-        auth[label="Auth Service", shape=box3d, fillcolor="#C8E6C9"];
-    }
-
-    subgraph cluster_data {
-        label="Data / Storage";
-        style="filled,rounded"; fillcolor="#FFFDE7";
-        db[label="Database (PostgreSQL)", shape=cylinder, fillcolor="#FFF9C4"];
-        blob[label="Blob Storage", shape=cylinder, fillcolor="#FFF9C4"];
-    }
-
-    subgraph cluster_ai {
-        label="AI / Analytics";
-        style="filled,rounded"; fillcolor="#F3E5F5";
-        ai[label="AI Engine / Insights", shape=ellipse, fillcolor="#E1BEE7"];
-        dashboard[label="BI Dashboard", shape=ellipse, fillcolor="#E1BEE7"];
-    }
-
-    # Data flow (using xlabels to avoid orthogonal label warnings)
-    web -> api [xlabel="HTTP Request"];
-    mobile -> api [xlabel="Mobile API Call"];
-    api -> db [xlabel="DB Query"];
-    db -> ai [xlabel="ETL/Inference"];
-    ai -> dashboard [xlabel="Visualization"];
-    api -> auth [xlabel="Auth Validation"];
-
-}
-"""
-
-    # --- Render DOT → PNG & SVG ---
-    tmp_base = tempfile.NamedTemporaryFile(delete=False, suffix=".dot").name
-    try:
-        graph = graphviz.Source(fallback_dot, engine="dot")
-        graph.render(tmp_base, format="png", cleanup=True)
-        graph.render(tmp_base, format="svg", cleanup=True)
-
-        png_path = tmp_base + ".png"
-        svg_path = tmp_base + ".svg"
-    except Exception as e:
-        logger.error(f" Fallback Graphviz rendering failed: {e}")
-        return None, ""
-
-    # --- Upload both files to Azure Blob ---
-    blob_name_png = f"{blob_base_path}/architecture_fallback_{project.id}.png"
-    blob_name_svg = f"{blob_base_path}/architecture_fallback_{project.id}.svg"
-
-    try:
-        with open(png_path, "rb") as fh:
-            await azure_blob.upload_bytes(fh.read(), blob_name_png)
-        with open(svg_path, "rb") as fh:
-            await azure_blob.upload_bytes(fh.read(), blob_name_svg)
-    finally:
-        for path in [png_path, svg_path, tmp_base]:
-            try:
-                os.remove(path)
-            except FileNotFoundError:
-                pass
-
-    # --- Save both records in DB ---
-    db_file_png = models.ProjectFile(
-        project_id=project.id,
-        file_name="architecture.png",
-        file_path=blob_name_png,
-    )
-    db_file_svg = models.ProjectFile(
-        project_id=project.id,
-        file_name="architecture.svg",
-        file_path=blob_name_svg,
-    )
-
-    db.add_all([db_file_png, db_file_svg])
-    await db.commit()
-    await db.refresh(db_file_png)
-    await db.refresh(db_file_svg)
-
-    logger.info(
-        f" Fallback architecture diagrams stored for project {project.id}: "
-        f"{blob_name_png}, {blob_name_svg}"
-    )
-
-    return db_file_png, blob_name_png
-
-
-
-
-async def generate_architecture(
-    db: AsyncSession,
-    project,
-    rfp_text: str,
-    kb_chunks: List[str],
-    blob_base_path: str,
-) -> tuple[models.ProjectFile | None, str]:
-    """
-    Generate structured architecture diagram using JSON-to-DOT approach.
-    """
-
-    prompt = _build_architecture_prompt(rfp_text, kb_chunks, project)
-
-    # ---------- Step 1: Ask Ollama for JSON structure ----------
-    logger.info(f"🏗️ Generating structural architecture JSON for project {project.id}...")
-    
-    async def _generate_json_from_ai(retry: int = 0) -> dict:
-        try:
-            # Use format_json=True if supported by wrapper, else trust prompt
-            response_text = await anyio.to_thread.run_sync(
-                lambda: ollama_chat(prompt, temperature=0.3, format_json=True)
-            )
-            return _extract_json(response_text)
-        except Exception as e:
-            if retry < 2:
-                logger.warning(f"AI generation failed (retry {retry+1}): {e}")
-                return await _generate_json_from_ai(retry + 1)
-            return {}
-
-    arch_json = await _generate_json_from_ai()
-
-    if not arch_json or not any(key in arch_json for key in ["frontend", "backend", "data"]):
-        logger.warning("⚠️ Invalid or empty architecture JSON returned - using fallback")
-        return await _generate_fallback_architecture(db, project, blob_base_path)
-
-    # ---------- Step 2: Convert JSON to Deterministic DOT ----------
-    try:
-        dot_code = _generate_dot_from_json(arch_json)
-        logger.info(f"✅ Generated deterministic DOT code ({len(dot_code)} chars)")
-    except Exception as e:
-        logger.error(f"❌ Failed to convert JSON to DOT: {e}")
-        return await _generate_fallback_architecture(db, project, blob_base_path)
-
-    # ---------- Step 3: Render DOT → PNG & SVG ----------
-    import tempfile
-    tmp_base = tempfile.NamedTemporaryFile(delete=False, suffix=".dot").name
-    try:
-        # Use existing logic but strictly with our clean DOT
-        graph = graphviz.Source(dot_code, engine="dot")
-        
-        # Ensure graphviz is installed
-        try:
-            import shutil
-            if not shutil.which("dot"):
-                 logger.error("❌ Graphviz 'dot' executable not found in PATH")
-                 return None, ""
-        except:
-             pass
-
-        # Write to temp file first for debugging if needed
-        with open(tmp_base, "w") as f:
-            f.write(dot_code)
-
-        # Render
-        output_png = graph.render(tmp_base, format="png", cleanup=False)
-        output_svg = graph.render(tmp_base, format="svg", cleanup=False)
-        
-        # Adjust paths (render adds extension automatically)
-        png_path = output_png 
-        svg_path = output_svg
-        
-        # Verify files exist
-        if not os.path.exists(png_path):
-             png_path = tmp_base + ".png"
-             svg_path = tmp_base + ".svg"
-
-    except Exception as e:
-        logger.error(f"❌ Graphviz rendering failed: {e}")
-        return None, ""
-
-    # ---------- Step 4: Upload to Azure Blob ----------
-    # Note: blob_base_path is "projects/{project_id}", we need just "{project_id}/filename"
-    # because the download endpoint will add "projects/" via the base parameter
-    project_relative_path = blob_base_path.replace("projects/", "")
-    blob_name_png = f"{project_relative_path}/architecture_{project.id}.png"
-    blob_name_svg = f"{project_relative_path}/architecture_{project.id}.svg"
-
-    try:
-        with open(png_path, "rb") as fh:
-            await azure_blob.upload_bytes(fh.read(), blob_name_png, base="projects")
-        with open(svg_path, "rb") as fh:
-            await azure_blob.upload_bytes(fh.read(), blob_name_svg, base="projects")
-            
-        logger.info(f"✅ Uploaded architecture diagrams: {blob_name_png}")
-    except Exception as e:
-        logger.error(f"❌ Failed to upload diagrams: {e}")
-        return None, ""
-    finally:
-        # Cleanup temp files
-        for path in [png_path, svg_path, tmp_base, tmp_base + ".png", tmp_base + ".svg"]:
-            try:
-                if os.path.exists(path): os.remove(path)
-            except: pass
-
-    # ---------- Step 5: Save DB Records ----------
-    result = await db.execute(
-        select(models.ProjectFile).filter(
-            models.ProjectFile.project_id == project.id,
-            models.ProjectFile.file_name.in_(["architecture.png", "architecture.svg"])
-        )
-    )
-    existing_files = result.scalars().all()
-    for f in existing_files:
-        await db.delete(f)
-    
-    db_file_png = models.ProjectFile(
-        project_id=project.id,
-        file_name="architecture.png",
-        file_path=blob_name_png
-    )
-    db_file_svg = models.ProjectFile(
-        project_id=project.id,
-        file_name="architecture.svg",
-        file_path=blob_name_svg
-    )
-
-    db.add_all([db_file_png, db_file_svg])
-    await db.commit()
-    await db.refresh(db_file_png)
-
-    # Return the full blob path including 'projects/' prefix for correct retrieval
-    full_blob_path = f"projects/{blob_name_png}"
-    return db_file_png, full_blob_path
 
 
 
@@ -2491,26 +1215,37 @@ async def clean_scope(db: AsyncSession, data: Dict[str, Any], project=None) -> D
     # --- Project span & month labels (Month 1, Month 2, ...) ---
     min_start = min(start_dates) if start_dates else today
     max_end = max(end_dates) if end_dates else min_start
-    duration_days = (max_end - min_start).days
-    total_months_full = int(duration_days / 30)
-    remaining_days = duration_days % 30
     
-    if total_months_full == 0:
-        if remaining_days == 0:
-            formatted_duration = "1 day" # Minimum
-        else:
-            formatted_duration = f"{remaining_days} days"
+    # 🧠 PRESERVE CPM MATH DURATION IF AVAILABLE (Unless explicitly regenerating)
+    precalculated_duration = data.get("overview", {}).get("Duration")
+    force_recalc = data.get("_force_duration_recalc", False)
+    
+    if precalculated_duration and precalculated_duration != "0 months" and not force_recalc:
+        duration = precalculated_duration
+        # Extract numerical months for the loop
+        match = re.search(r"(\d+(\.\d+)?)", str(duration))
+        total_months = max(1, math.ceil(float(match.group(1)))) if match else 1
     else:
-        month_str = "month" if total_months_full == 1 else "months"
-        if remaining_days <= 1: # Ignore negligible days
-            formatted_duration = f"{total_months_full} {month_str}"
-        elif remaining_days > 20: # Round up
-            formatted_duration = f"{total_months_full + 1} months"
+        duration_days = (max_end - min_start).days
+        total_months_full = int(duration_days / 30)
+        remaining_days = duration_days % 30
+        
+        if total_months_full == 0:
+            if remaining_days == 0:
+                formatted_duration = "1 day" # Minimum
+            else:
+                formatted_duration = f"{remaining_days} days"
         else:
-            formatted_duration = f"{total_months_full} {month_str}, {remaining_days} days"
+            month_str = "month" if total_months_full == 1 else "months"
+            if remaining_days <= 1: # Ignore negligible days
+                formatted_duration = f"{total_months_full} {month_str}"
+            elif remaining_days > 20: # Round up
+                formatted_duration = f"{total_months_full + 1} months"
+            else:
+                formatted_duration = f"{total_months_full} {month_str}, {remaining_days} days"
 
-    duration = formatted_duration
-    total_months = max(1, math.ceil(duration_days / 30.0))
+        duration = formatted_duration
+        total_months = max(1, math.ceil(duration_days / 30.0))
 
     month_labels = [f"Month {i}" for i in range(1, total_months + 1)]
 
@@ -2645,6 +1380,8 @@ async def clean_scope(db: AsyncSession, data: Dict[str, Any], project=None) -> D
         "Use Cases": _safe_str(ov.get("Use Cases") or getattr(project, "use_cases", "")),
         "Compliance": _safe_str(ov.get("Compliance") or getattr(project, "compliance", "")),
         "Duration": duration,
+        "Start Date": _safe_str(ov.get("Start Date") or ""),
+        "End Date": _safe_str(ov.get("End Date") or ""),
         "Generated At": datetime.now(ist).strftime("%Y-%m-%d %H:%M %Z"),
     }
     try:
@@ -2678,151 +1415,70 @@ def _transform_agent_output_to_scope_format(agent_scope: dict, project) -> dict:
     Agent returns:
     {
         "project_overview": {...},
-        "timeline": {...},
-        "team_composition": [...],
-        "cost_summary": {...},
         "phases": [...],
-        "activities": [...]
-    }
-    
-    We need to convert to:
-    {
-        "overview": {...},
-        "activities": [...]
+        "team_composition": [...],
+        "activities": [...] # raw dictionaries from Pydantic
     }
     """
-    from datetime import datetime, timedelta
-    
-    # Extract data from agent output
-    project_overview = agent_scope.get("project_overview", {})
-    timeline = agent_scope.get("timeline", {})
-    activities_list = agent_scope.get("activities", [])
-    phases = agent_scope.get("phases", [])
+    from datetime import datetime
+    from app.utils.scheduling import calculate_project_schedule
+    from app.schemas import ActivityItem
     
     # Build overview
+    project_overview = agent_scope.get("project_overview", {})
+    
+    # Extract AI-generated tech stack to a readable string
+    raw_tech_stack = agent_scope.get("recommended_tech_stack", [])
+    formatted_tech_stack = ""
+    if raw_tech_stack:
+        parts = []
+        for cat in raw_tech_stack:
+            cat_name = cat.get("category", "")
+            techs = cat.get("technologies", [])
+            if cat_name and techs:
+                parts.append(f"{cat_name}: {', '.join(techs)}")
+        if parts:
+            formatted_tech_stack = " | ".join(parts)
+            
+    # Default back to the project's tech stack if the generation failed
+    final_tech_stack_str = formatted_tech_stack if formatted_tech_stack else getattr(project, "tech_stack", "")
+
     overview = {
         "Project Name": project_overview.get("name", getattr(project, "name", "Untitled")),
         "Domain": project_overview.get("domain", getattr(project, "domain", "")),
-        "Tech Stack": getattr(project, "tech_stack", ""),
+        "Tech Stack": final_tech_stack_str,
         "Use Cases": getattr(project, "use_cases", ""),
-        "Complexity": getattr(project, "complexity", ""),
+        "Complexity": project_overview.get("complexity") or getattr(project, "complexity", ""),
         "Compliance": getattr(project, "compliance", ""),
-        "Duration": timeline.get("total_months", 6),
     }
     
-    # Convert agent activities to legacy format
-    # Agent activities have: name, phase, effort_months, assigned_role, dependencies
-    # Legacy format needs: Activities, Owner, Resources, Start Date, End Date, Effort Months
+    # Parse activities back into ActivityItem objects to pass into the Scheduler
+    raw_activities = agent_scope.get("activities", [])
+    activity_items = []
+    for act in raw_activities:
+        # Provide fallback values if Pydantic schema keys aren't an exact match (safety net)
+        activity_items.append(ActivityItem(
+            name=act.get("name", "Unnamed Activity"),
+            phase=act.get("phase", "Execution"),
+            owner=act.get("owner", "Project Manager"),
+            effort_months=float(act.get("effort_months", 1.0)),
+            dependencies=act.get("dependencies", [])
+        ))
+
+    # Assume project starts today
+    start_date_str = datetime.now().strftime("%Y-%m-%d")
     
-    activities = []
-    start_date = datetime.now()
-    
-    if timeline.get("start_date"):
-        try:
-            parsed_start = datetime.fromisoformat(timeline["start_date"].replace("Z", "+00:00"))
-            # Ensure start date is not in the past
-            if parsed_start.date() >= datetime.now().date():
-                start_date = parsed_start
-            else:
-                logger.warning(f"⚠️ AI generated past start date ({parsed_start.date()}), using today instead")
-                start_date = datetime.now()
-        except Exception as e:
-            logger.warning(f"⚠️ Failed to parse start_date: {e}, using today")
-            start_date = datetime.now()
-    
-    current_date = start_date
-    
-    for idx, act in enumerate(activities_list, 1):
-        # Priority 1: Use explicit Agent Schedule (weeks)
-        start_offset_weeks = act.get("start_offset_weeks")
-        duration_weeks = act.get("duration_weeks")
-        
-        # Priority 2: Use explicit Agent Dates (if provided, rare)
-        # (Already parsed in timeline, but per activity?)
-        
-        effort_months = act.get("effort_months", 1)
-        
-        if start_offset_weeks is not None and duration_weeks is not None:
-             # 🗓️ DYNAMIC SCHEDULE from Agent
-             offset_days = int(float(start_offset_weeks) * 7)
-             duration_days = int(float(duration_weeks) * 7)
-             
-             act_start_date = start_date + timedelta(days=offset_days)
-             act_end_date = act_start_date + timedelta(days=duration_days)
-             
-             # If agent didn't provide effort_months, derive from duration
-             if "effort_months" not in act:
-                 effort_months = round_to_half(duration_weeks / 4.0)
-                 
-             # Update current_date for fallback usage in mixed lists?
-             # If we have explicit dates, we don't strictly update current_date sequentially
-             # But let's keep it moving just in case the NEXT item lacks dates
-             if act_end_date > current_date:
-                 current_date = act_end_date 
-
-        else:
-             # 📉 FALLBACK: Sequential Waterfall (Legacy)
-             effort_days = int(effort_months * 30)
-             act_start_date = current_date
-             act_end_date = current_date + timedelta(days=effort_days)
-             
-             # Move current date forward (with 20% overlap hardcoded fallback)
-             # This is only used if Agent FAILS to provide schedule
-             current_date = current_date + timedelta(days=int(effort_days * 0.8))
-        
-        # Extract resources (dependencies in agent format)
-        resources = act.get("dependencies", [])
-        if isinstance(resources, list):
-            resources_str = ", ".join(resources)
-        else:
-            resources_str = ""
-        
-        activity = {
-            "ID": idx,
-            "Activities": act.get("name", f"Activity {idx}"),
-            "Owner": act.get("assigned_role", "Project Manager"),
-            "Resources": resources_str,
-            "Start Date": act_start_date.strftime("%Y-%m-%d"),
-            "End Date": act_end_date.strftime("%Y-%m-%d"),
-            "Effort Months": effort_months
-        }
-        
-        activities.append(activity)
-    
-    # If no activities from agent, create basic structure from phases
-    if not activities and phases:
-        current_date = start_date
-        for idx, phase in enumerate(phases, 1):
-            duration_months = phase.get("duration_months", 1)
-            duration_days = int(duration_months * 30)
-            end_date = current_date + timedelta(days=duration_days)
-
-            activity = {
-                "ID": idx,
-                "Activities": phase.get("name", f"Phase {idx}"),
-                "Owner": "Project Manager",
-                "Resources": "Team",
-                "Start Date": current_date.strftime("%Y-%m-%d"),
-                "End Date": end_date.strftime("%Y-%m-%d"),
-                "Effort Months": duration_months
-            }
-
-            activities.append(activity)
-            current_date = end_date
-
-    # Calculate actual project duration from activities
-    if activities:
-        first_start = datetime.strptime(activities[0]["Start Date"], "%Y-%m-%d")
-        last_end = datetime.strptime(activities[-1]["End Date"], "%Y-%m-%d")
-        actual_duration_days = (last_end - first_start).days
-        actual_duration_months = round(actual_duration_days / 30.0, 1)
-
-        # Update overview with actual calculated duration
-        overview["Duration"] = f"{actual_duration_months} months"
-        overview["Start Date"] = activities[0]["Start Date"]
-        overview["End Date"] = activities[-1]["End Date"]
-
-        logger.info(f"📅 Timeline calculated: {activities[0]['Start Date']} to {activities[-1]['End Date']} ({actual_duration_months} months)")
+    # 🧠 PASS INTO CPM DETERMINISTIC ALGORITHM
+    if activity_items:
+        schedule_result = calculate_project_schedule(activity_items, start_date_str)
+        activities = schedule_result["activities"]
+        overview["Duration"] = f"{schedule_result['total_duration_months']} months"
+        overview["Start Date"] = schedule_result["start_date"]
+        overview["End Date"] = schedule_result["end_date"]
+        logger.info(f"📅 Timeline calculated: {overview['Start Date']} to {overview['End Date']} ({schedule_result['total_duration_months']} months)")
+    else:
+        activities = []
+        overview["Duration"] = "0 months"
 
     # Build final scope structure
     scope = {
@@ -2831,10 +1487,12 @@ def _transform_agent_output_to_scope_format(agent_scope: dict, project) -> dict:
         "project_summary": {
             "executive_summary": project_overview.get("objective", ""),
             "key_deliverables": project_overview.get("key_deliverables", [])
-        }
+        },
+        "recommended_tech_stack": agent_scope.get("recommended_tech_stack", []),
     }
 
     return scope
+
 
 
 
@@ -2936,16 +1594,56 @@ async def generate_project_scope(db: AsyncSession, project) -> dict:
                 logger.warning(f" Could not access project.files: {e}")
                 files = []
         if files:
-            rfp_text = await _extract_text_from_files(files)
+            rfp_text = await extract_text_from_files(files)
     except Exception as e:
         logger.warning(f"File extraction for project {getattr(project, 'id', None)} failed: {e}")
 
-    # ---------- Trim RFP text ----------
-    rfp_tokens = tokenizer.encode(rfp_text or "")
-    if len(rfp_tokens) > 5000:
-        rfp_tokens = rfp_tokens[:5000]
-    rfp_text = tokenizer.decode(rfp_tokens)
-    used_tokens += len(rfp_tokens)
+    # ---------- Smart Document Processing (Head + Tail + RAG) ----------
+    focused_rfp_content = rfp_text
+    if rfp_text:
+        # If document is under 100,000 tokens, just use the entire complete document for 100% accuracy
+        rfp_token_length = len(tokenizer.encode(rfp_text or ""))
+        if rfp_token_length <= 100000:
+            focused_rfp_content = rfp_text
+            logger.info(f"📄 Using full RFP text ({rfp_token_length} tokens) for maximum accuracy")
+        else:
+            logger.info("🔍 Large document detected. Using Head + Tail + Targeted RAG Extraction.")
+            
+            # Extract Head (approx 3000 tokens)
+            head_text = extract_document_overview(rfp_text, max_chars=12000)
+            
+            # Extract Tail (approx 2000 tokens from the end)
+            tail_chars = 8000
+            tail_text = rfp_text[-tail_chars:]
+            # Try to cut at a sentence boundary cleanly
+            first_period = tail_text.find('. ')
+            if first_period != -1 and first_period < tail_chars * 0.2:
+                tail_text = tail_text[first_period + 2:]
+                
+            # Extract Middle using RAG
+            project_name = getattr(project, "name", None) or getattr(project, "domain", None) or "project"
+            key_aspects = [
+                "technical stack architecture infrastructure technologies database frameworks",
+                "project phases milestones timeline schedule deliverables",
+                "team sizes roles responsibilities resource requirements"
+            ]
+            relevant_sections = _retrieve_relevant_sections_by_aspects(project_name, key_aspects, k=2)
+            
+            # Combine everything intelligently
+            combined_parts = [
+                f"--- EXECUTIVE SUMMARY (START OF RFP) ---\n{head_text}",
+            ]
+            
+            if relevant_sections:
+                combined_parts.append("\n--- KEY SCOPING REQUIREMENTS (EXTRACTED) ---")
+                combined_parts.append("\n\n".join(relevant_sections))
+                
+            combined_parts.append(f"\n--- ADDITIONAL CONSTRAINTS (END OF RFP) ---\n{tail_text}")
+                
+            focused_rfp_content = "\n\n".join(combined_parts)
+            logger.info(f"✅ Extracted focused content: {len(focused_rfp_content)} chars (reduced from {len(rfp_text)} chars)")
+
+    rfp_text = focused_rfp_content
 
     # ---------- Retrieve KB context ----------
     fallback_fields = [
@@ -3029,8 +1727,10 @@ Generate activities with realistic start/end dates, proper role assignments, and
         if stop:
             break
 
+    # Recalculate rfp_tokens length for logging since we overwrote the variable
+    rfp_tokens_count = len(tokenizer.encode(rfp_text or ""))
     logger.info(
-        f"Final RFP tokens: {len(rfp_tokens)}, KB tokens: {used_tokens - len(rfp_tokens)}, Total: {used_tokens}/{max_total_tokens}"
+        f"Final RFP tokens: {rfp_tokens_count}, KB tokens: {used_tokens - rfp_tokens_count}, Total: {used_tokens}/{max_total_tokens}"
     )
 
     # ---------- Load questions.json (if exists) and build Q&A context ----------
@@ -3152,9 +1852,37 @@ Generate activities with realistic start/end dates, proper role assignments, and
         # Use RFP text or fallback
         final_rfp_text = rfp_text or fallback_text
 
+        # Snapshot raw user-provided values BEFORE the agent fills them in.
+        # Used later to detect which fields the AI inferred vs. the user provided.
+        original_tech_stack = getattr(project, "tech_stack", None) or ""
+        original_domain = getattr(project, "domain", None) or ""
+        original_complexity = getattr(project, "complexity", None) or ""
+        original_use_cases = getattr(project, "use_cases", None) or ""
+        original_compliance = getattr(project, "compliance", None) or ""
+        original_duration = str(getattr(project, "duration", None) or "").strip()
+
+
         # Call agent to generate scope
         logger.info(f"🚀 Agent starting autonomous reasoning for project: {project_name}")
         duration = str(getattr(project, "duration", "") or "").strip()
+
+        # Fetch Past Proposals and format them
+        logger.info(f"🔎 Retrieving Past SOW Proposals for calibration...")
+        past_proposals = _retrieve_past_proposals(final_rfp_text, k=3)
+        past_proposals_context = None
+        if past_proposals:
+            pp_lines = []
+            for pp in past_proposals:
+                pp_lines.append(f"""
+- **Past Client**: {pp.get('client_name')}
+- **Domain**: {pp.get('domain')}
+- **Duration**: {pp.get('duration_months')} months
+- **Team Size**: {pp.get('team_size')}
+- **Total Cost**: ${pp.get('total_cost'):,.0f}
+- **Summary**: {pp.get('summary')}
+""")
+            past_proposals_context = "\n".join(pp_lines)
+            logger.info(f"✅ Found {len(past_proposals)} similar past proposals for calibration")
 
         agent_scope = await agent.generate_scope(
             project_name=project_name,
@@ -3166,7 +1894,8 @@ Generate activities with realistic start/end dates, proper role assignments, and
             complexity=complexity,
             use_cases=use_cases,
             duration=duration,
-            closeout_actuals_context=closeout_actuals_context
+            closeout_actuals_context=closeout_actuals_context,
+            past_proposals_context=past_proposals_context
         )
         
         logger.info(f"✅ Agent completed scope generation")
@@ -3215,13 +1944,69 @@ Generate activities with realistic start/end dates, proper role assignments, and
             except Exception as e:
                 logger.warning(f"⚠️  Failed to update project metadata: {e}")
 
+        # Step 1.4: Compute inferred fields (AI filled in what user left blank)
+        try:
+            original_values = {
+                "Tech Stack": original_tech_stack,
+                "Domain": original_domain,
+                "Complexity": original_complexity,
+                "Use Cases": original_use_cases,
+                "Compliance": original_compliance,
+                "Duration": original_duration,
+            }
+            overview_ai = cleaned_scope.get("overview", {})
+            inferred = []
+            for field_key, orig_val in original_values.items():
+                ai_val = overview_ai.get(field_key)
+                # Flag as inferred if: user had nothing AND AI put something
+                if not orig_val and ai_val and str(ai_val).strip():
+                    inferred.append(field_key)
+            cleaned_scope["inferred_fields"] = inferred
+            if inferred:
+                logger.info(f"🔍 Inferred fields (AI filled in): {inferred}")
+            else:
+                logger.info("✅ No inferred fields — all overview values were user-provided.")
+        except Exception as e:
+            logger.warning(f"Failed to compute inferred fields: {e}")
+            cleaned_scope["inferred_fields"] = []
+
+        # Step 1.5: Validate against industry benchmarks
+        from app.utils.confidence import calculate_confidence
+        warnings = []
+        try:
+            from app.utils.benchmarks import validate_against_benchmark
+            warnings = validate_against_benchmark(
+                cleaned_scope,
+                domain=getattr(project, "domain", ""),
+                complexity=getattr(project, "complexity", "")
+            )
+            if warnings:
+                cleaned_scope["_warnings"] = warnings
+                logger.info(f"⚠️ Added {len(warnings)} benchmark warnings to scope.")
+        except Exception as e:
+            logger.warning(f"Benchmark validation failed: {e}")
+            
+        # Step 1.6: Calculate Confidence Score
+        try:
+            confidence_data = calculate_confidence(
+                past_proposals_found=len(past_proposals) if past_proposals_context else 0,
+                benchmark_warnings=warnings,
+                is_closed_override=is_closed and bool(resource_actuals)
+            )
+            cleaned_scope["confidence_score"] = confidence_data["score"]
+            cleaned_scope["confidence_reasons"] = confidence_data["reasons"]
+            logger.info(f"🎯 Assigned confidence score: {confidence_data['score']}")
+        except Exception as e:
+            logger.warning(f"Failed to calculate confidence score: {e}")
+
+
         # Step 2: Generate + store architecture diagram
         try:
             blob_base_path = f"{PROJECTS_BASE}/{getattr(project, 'id', 'unknown')}"
-            db_file, arch_blob = await generate_architecture(
+            _, arch_dict = await generate_architecture(
                 db, project, rfp_text, kb_chunks, blob_base_path
             )
-            cleaned_scope["architecture_diagram"] = arch_blob or None
+            cleaned_scope["architecture_diagram"] = arch_dict or None
         except Exception as e:
             logger.warning(f"Architecture diagram generation failed: {e}")
             cleaned_scope["architecture_diagram"] = None
@@ -3364,33 +2149,29 @@ WRONG activity example (DO NOT DO THIS):
 ####  Temporal Adjustment Rules
 Use these to keep the schedule consistent and continuous.
 
-**Add new activity (bottom)**  
-- Append at the end.  
-- Start date = 10 days *before* the current latest end_date.  
-- End date = start_date + duration derived from effort_days.  
-- Allow small overlap (10-15 %) with the last activity to maximize parallelism.
-
-**Add new activity (in middle)**  
-- Insert between the target activities without disturbing global schedule.  
-- Preceding activity’s end date remains fixed.  
-- Following activity’s start shifts minimally to maintain continuity.  
-- Only local dates adjust; efforts remain unchanged for following activities.
+**Add new activity**  
+1. Identify the logical chronological position to insert the new activity based on its technical phase.
+2. Calculate its `Start Date` and `End Date`.
+3. CRITICAL MATHEMATICAL STEP: You MUST shift the `Start Date` and `End Date` of EVERY SINGLE activity that follows the new activity LATER in time by exactly the duration of the new activity. Do not let the new activity overlap with subsequent activities. If you fail to shift the following dates, the timeline will be broken.
 
 **Delete activity**  
 - Remove it completely.  
-- Do not introduce gaps; subsequent activities retain start/end dates.
+- Shift all subsequent activities EARLIER in time to close the gap and maintain a continuous timeline.
 
 **Split activity into two**  
 - Divide one activity into two consecutive ones.  
 - Combined effort_days = original.  
 - Combined duration = original.  
-- Other activities’ dates stay the same.
+- Other activities’ dates shift if the total duration changes.
 
 **Merge two activities**
 - Combine both into one.
 - start_date = min(start of both)
 - end_date = max(end of both)
 - effort_days = sum(efforts of both)
+
+**Duration Update**
+- If you add or remove activities, you MUST update the `overview.Duration` field to correctly reflect the new overall timeline (from first start date to last end date).
 
 ####  Role Management Rules
 Critical: When user requests to add or remove roles, you MUST update BOTH activities and resourcing_plan.
@@ -3480,12 +2261,61 @@ Return only the updated JSON.
 """
 
 
-    # ---- Query Ollama creatively with JSON enforcement ----
-    # Use lower temperature for more consistent instruction-following
+    # ================================================================
+    # PRE-PROCESSING: Apply activity name removal DIRECTLY to draft
+    # before Ollama call — guarantees it works even if Ollama fails
+    # ================================================================
+    import re as _re
+    if instructions and any(word in instructions.lower() for word in ['remove', 'delete']):
+        instr_lower = instructions.lower()
+        removal_phrases = _re.findall(
+            r'(?:remove|delete)\s+([^\n,\.]+)',
+            instr_lower,
+            _re.IGNORECASE
+        )
+        common_roles_lower = [
+            'project manager', 'business analyst', 'data architect', 'data engineer',
+            'backend developer', 'frontend developer', 'qa engineer', 'devops engineer',
+            'cloud architect', 'data analyst', 'ux designer', 'ai/ml engineer',
+            'sustainability analyst', 'scrum master'
+        ]
+        for phrase in removal_phrases:
+            phrase_cleaned = phrase.strip().lower()
+            # Skip pure role-removal instructions (handled separately)
+            if any(role in phrase_cleaned for role in common_roles_lower):
+                continue
+            original_count = len(draft.get('activities', []))
+            meaningful_words = [w for w in phrase_cleaned.split() if len(w) > 3]
+            draft['activities'] = [
+                act for act in draft.get('activities', [])
+                if phrase_cleaned not in act.get('Activities', '').lower()
+                and not (meaningful_words and any(all(w in act.get('Activities', '').lower() for w in meaningful_words) for _ in [1]))
+            ]
+            removed = original_count - len(draft.get('activities', []))
+            if removed > 0:
+                # Re-number IDs
+                for i, act in enumerate(draft['activities'], start=1):
+                    act['ID'] = i
+                logger.info(f"✅ PRE-PROCESSING: Removed {removed} activities matching '{phrase_cleaned}'")
+            else:
+                logger.info(f"ℹ️ PRE-PROCESSING: No activities matched '{phrase_cleaned}'")
+
+    # ---- Query Azure OpenAI for reliable instruction-following ----
     try:
-        raw_text = await anyio.to_thread.run_sync(lambda: ollama_chat(prompt, temperature=0.2, format_json=True))
-        logger.info(f"🤖 LLM response length: {len(raw_text)} chars")
-        logger.debug(f"LLM raw response (first 500 chars): {raw_text[:500]}")
+        from app.config.config import AZURE_OPENAI_DEPLOYMENT
+        azure_client = get_async_azure_client()
+        response = await azure_client.chat.completions.create(
+            model=AZURE_OPENAI_DEPLOYMENT,
+            messages=[
+                {"role": "system", "content": "You are an expert project scope editor. You must return only valid JSON — no markdown, no explanation, no code fences."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0,
+            response_format={"type": "json_object"}
+        )
+        raw_text = response.choices[0].message.content
+        logger.info(f"🤖 Azure OpenAI regen response length: {len(raw_text)} chars")
+        logger.debug(f"Azure regen response (first 500 chars): {raw_text[:500]}")
         updated_scope = _extract_json(raw_text)
 
         logger.info(f"📊 Extracted scope structure: overview={bool(updated_scope.get('overview'))}, "
@@ -3520,10 +2350,6 @@ Return only the updated JSON.
             if unassigned_count > new_activity_count * 0.5:  # More than 50% unassigned
                 activities_are_valid = False
                 validation_failures.append(f"{unassigned_count}/{new_activity_count} activities have Unassigned owner")
-
-            if empty_desc_count > new_activity_count * 0.5:  # More than 50% empty descriptions
-                activities_are_valid = False
-                validation_failures.append(f"{empty_desc_count}/{new_activity_count} activities have empty descriptions")
 
             if role_name_activities > new_activity_count * 0.3:  # More than 30% are just role names
                 activities_are_valid = False
@@ -3623,6 +2449,46 @@ Return only the updated JSON.
                 if changes_made:
                     logger.info(f"✅ Post-processing successfully removed role '{role_to_remove}' from activities")
 
+        # ---- Post-processing: Activity name-based removal ----
+        # Directly remove activities by name when user says "remove <activity name>"
+        if instructions and any(word in instructions.lower() for word in ['remove', 'delete']) and updated_scope.get('activities'):
+            import re
+            instr_lower = instructions.lower()
+
+            # Extract everything after "remove" or "delete" keyword
+            removal_phrases = re.findall(
+                r'(?:remove|delete)\s+([^\n,\.]+)',
+                instr_lower,
+                re.IGNORECASE
+            )
+
+            for phrase in removal_phrases:
+                phrase_cleaned = phrase.strip().lower()
+                # Skip if it looks like a role name instruction (already handled above)
+                common_roles = ['project manager', 'business analyst', 'data architect', 'data engineer',
+                               'backend developer', 'frontend developer', 'qa engineer', 'devops engineer',
+                               'cloud architect', 'data analyst', 'ux designer', 'ai/ml engineer',
+                               'sustainability analyst', 'scrum master']
+                if any(role in phrase_cleaned for role in common_roles):
+                    continue
+
+                original_count = len(updated_scope['activities'])
+                # Remove activities whose name contains the phrase (substring match)
+                updated_scope['activities'] = [
+                    act for act in updated_scope['activities']
+                    if phrase_cleaned not in act.get('Activities', '').lower()
+                    and not any(all(w in act.get('Activities', '').lower() for w in phrase_cleaned.split() if len(w) > 3) for _ in [1])
+                ]
+                removed_count = original_count - len(updated_scope['activities'])
+                if removed_count > 0:
+                    logger.info(f"✅ Post-processing: removed {removed_count} activities matching '{phrase_cleaned}'")
+
+                    # Re-number remaining activities sequentially
+                    for i, act in enumerate(updated_scope['activities'], start=1):
+                        act['ID'] = i
+                else:
+                    logger.info(f"ℹ️ Post-processing: no activities matched removal phrase '{phrase_cleaned}'")
+
         # Post-processing: parse discount percentage from instructions
         if instructions:
             import re
@@ -3659,9 +2525,17 @@ Return only the updated JSON.
             if "resourcing_plan" not in updated_scope or not updated_scope.get("resourcing_plan"):
                 updated_scope["resourcing_plan"] = draft.get("resourcing_plan", [])
 
+        # Force strictly recalculating the final duration based on the new activities
+        updated_scope["_force_duration_recalc"] = True
+        
         cleaned = await clean_scope(db, updated_scope, project=project)
+        # Remove the internal flag after clean_scope handles it
+        if "_force_duration_recalc" in cleaned:
+            del cleaned["_force_duration_recalc"]
+            
         logger.info(f"✅ Cleaned scope: {len(cleaned.get('activities', []))} activities, "
-                   f"{len(cleaned.get('resourcing_plan', []))} resources")
+                   f"{len(cleaned.get('resourcing_plan', []))} resources, "
+                   f"Duration: {cleaned.get('overview', {}).get('Duration', 'N/A')}")
 
     except Exception as e:
         logger.error(f" Creative regeneration failed: {e}")
@@ -3766,34 +2640,80 @@ async def finalize_scope(
         await db.commit()
         await db.refresh(project)
 
-    # ---- Step 3: Generate Architecture Diagram (Deterministic) ----
-    logger.info("📐 Triggering architecture diagram generation...")
-    try:
-        # Fetch RFP content from project files
-        input_files = [
-            {"file_path": f.file_path, "file_name": f.file_name}
-            for f in project.files
-            if f.file_name not in ["scope.json", "finalized_scope.json", "questions.json", "architecture.png", "architecture.svg"]
-            and not f.file_name.startswith("architecture_")
-        ]
-        
-        if input_files:
-            rfp_text = await _extract_text_from_files(input_files)
-            if rfp_text:
-                # Retrieve context
-                kb_chunks = _rag_retrieve(rfp_text[:1000])
-                blob_base_path = f"{PROJECTS_BASE}/{project_id}"
-                
-                # Retrieve and inject path
-                arch_result = await generate_architecture(db, project, rfp_text, kb_chunks, blob_base_path)
-                if arch_result and arch_result[1]:
-                    # arch_result is (db_file, blob_path_string)
-                    finalized["architecture_diagram"] = arch_result[1]
-                    logger.info(f"✅ Injected architecture path into scope: {arch_result[1]}")
+    # ---- Step 3: Handle Architecture Diagram ----
+    # If the frontend sent back a custom captured image, save it to blob storage
+    custom_image_b64 = scope_data.pop("custom_architecture_image", None)
+    
+    if custom_image_b64 and custom_image_b64.startswith("data:image/png;base64,"):
+        try:
+            import base64
+            logger.info("📸 Saving user-captured React Flow diagram as architecture.png")
+            
+            # Extract base64 data
+            b64_data = custom_image_b64.split(",")[1]
+            image_bytes = base64.b64decode(b64_data)
+            
+            # Save to blob
+            blob_path = f"{PROJECTS_BASE}/{project_id}/architecture.png"
+            await azure_blob.upload_bytes(image_bytes, blob_path, overwrite=True)
+            
+            # Ensure DB file record exists
+            from app.db.database import get_async_session
+            
+            arch_result = await db.execute(
+                select(models.ProjectFile).filter(
+                    models.ProjectFile.project_id == project_id,
+                    models.ProjectFile.file_name == "architecture.png"
+                )
+            )
+            arch_file = arch_result.scalars().first()
+            if not arch_file:
+                arch_file = models.ProjectFile(
+                    project_id=project_id,
+                    file_name="architecture.png",
+                    file_path=blob_path,
+                )
+                db.add(arch_file)
+                await db.commit()
+            
+            # Update scope with diagram path for presenton.py ONLY iff presenton needs it from scope metadata.
+            # actually presenton_client checks os.path or blob for "architecture*"; we will store the path.
+            # But wait, frontend wants JSON for the React Flow canvas to still render it!
+            # So we keep finalized["architecture_diagram"] as the JSON object.
+        except Exception as e:
+            logger.error(f"❌ Failed to save custom architecture image: {e}")
 
-    except Exception as e:
-        logger.error(f"❌ Failed to generate architecture during finalization: {e}")
-        # non-blocking error for finalization
+    # Generate Architecture Diagram (Deterministic) ONLY if we don't already have one in the scope
+    # (otherwise we would overwrite user's React Flow drag & drop changes)
+    if "architecture_diagram" not in finalized or not finalized["architecture_diagram"]:
+        logger.info("📐 Triggering architecture diagram generation...")
+        try:
+            # Fetch RFP content from project files
+            input_files = [
+                {"file_path": f.file_path, "file_name": f.file_name}
+                for f in project.files
+                if f.file_name not in ["scope.json", "finalized_scope.json", "questions.json", "architecture.png", "architecture.svg"]
+                and not f.file_name.startswith("architecture_")
+            ]
+            
+            if input_files:
+                rfp_text = await extract_text_from_files(input_files)
+                if rfp_text:
+                    # Retrieve context
+                    kb_chunks = _rag_retrieve(rfp_text[:1000])
+                    blob_base_path = f"{PROJECTS_BASE}/{project_id}"
+                    
+                    # Retrieve and inject path
+                    arch_result = await generate_architecture(db, project, rfp_text, kb_chunks, blob_base_path)
+                    if arch_result and len(arch_result) > 1 and arch_result[1]:
+                        finalized["architecture_diagram"] = arch_result[1]
+                        logger.info(f"✅ Injected React Flow architecture JSON into scope")
+
+        except Exception as e:
+            logger.error(f"❌ Failed to generate architecture during finalization: {e}")
+            # non-blocking error for finalization
+    else:
+        logger.info("✅ Architecture diagram JSON already present, skipping generation to preserve user edits.")
 
     # ---- Step 4: Save finalized_scope.json ----
     result = await db.execute(

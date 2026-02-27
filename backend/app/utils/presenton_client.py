@@ -49,306 +49,318 @@ class PresentonClient:
         language: str = "English"
     ) -> Dict[str, str]:
         """
-        Generate presentation from project scope data using Presenton API.
-        Uses docker exec as proxy since backend runs outside Docker and Presenton binds to localhost.
-        
-        Args:
-            scope_data: Project scope dictionary
-            rfp_text: Original RFP/requirements text for full context
-            n_slides: Number of slides to generate
-            template: Template name (e.g., "general", "business", "tech")
-            language: Presentation language
-        
-        Returns:
-            Dictionary with:
-                - presentation_id: UUID of generated presentation
-                - path: File path to generated PPTX
-                - edit_path: URL path to edit in Presenton UI
-        
-        Raises:
-            Exception: If generation fails
+        Generate presentation deterministically from project scope data.
+        Bypasses the LLM entirely and uses /create -> /update -> /export.
         """
-        # Format scope data as content string with RFP context
-        content = self._format_scope_for_presenton(scope_data, rfp_text)
+        # Force swift template since we mapped slides specifically to its aesthetic layouts
+        template = "swift"
+        logger.info(f"Generating deterministic presentation with Presenton: template={template}")
         
-        logger.info(f"Generating presentation with Presenton: {n_slides} slides, template={template}")
-        logger.info(f"📊 Content length: {len(content)} chars (RFP: {len(rfp_text)} chars)")
-        
-        # Create request payload
-        payload = {
-            "content": content,
-            "n_slides": n_slides,
-            "language": language,
-            "template": template,
-            "export_as": "pptx",
-            # Explicitly specify Azure OpenAI to override default Google Gemini
-            "llm_provider": "azureopenai",
-            "llm_model": "gpt-4o",
-            "enable_images": True,
-            "image_provider": "dall-e-3"
-        }
-
-        
-        # Use docker exec to make request from inside container
         import subprocess
         import tempfile
+        import json
+        import os
+        import math
+        import uuid
+        from datetime import datetime
         
         try:
-            # Write payload to temp file
+            # 1. CREATE PRESENTATION CONTAINER
+            create_payload = {
+                "content": "Deterministic generation layout map",
+                "n_slides": n_slides,
+                "language": language,
+                "template": template,
+                "export_as": "pptx",
+                "include_table_of_contents": False,
+                "include_title_slide": False
+            }
+            
             with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
-                json.dump(payload, f)
-                temp_file = f.name
-            
-            # Copy payload into container
+                json.dump(create_payload, f)
+                temp_create_file = f.name
+                
             subprocess.run(
-                ["docker", "cp", temp_file, "scopebot-presenton:/tmp/presenton_request.json"],
-                check=True,
-                capture_output=True
+                ["docker", "cp", temp_create_file, "scopebot-presenton:/tmp/presenton_create.json"],
+                check=True, capture_output=True
             )
+            os.unlink(temp_create_file)
             
-            # Make request from inside container using curl
-            result = subprocess.run(
+            create_result = subprocess.run(
                 [
                     "docker", "exec", "scopebot-presenton",
                     "curl", "-s", "-X", "POST",
-                    "http://localhost:8000/api/v1/ppt/presentation/generate",
+                    "http://localhost:8000/api/v1/ppt/presentation/create",
                     "-H", "Content-Type: application/json",
-                    "-d", f"@/tmp/presenton_request.json"
+                    "-d", "@/tmp/presenton_create.json"
                 ],
-                capture_output=True,
-                text=True,
-                timeout=600
+                capture_output=True, text=True, timeout=60
             )
             
-            # Clean up temp file
-            import os
-            os.unlink(temp_file)
+            if create_result.returncode != 0:
+                raise Exception(f"Create failed: {create_result.stderr}")
+                
+            presentation = json.loads(create_result.stdout)
+            presentation_id = presentation.get('id')
+            if not presentation_id:
+                raise Exception(f"Invalid create response: {create_result.stdout}")
+                
+            logger.info(f"Created presentation container: {presentation_id}")
             
-            if result.returncode != 0:
-                raise Exception(f"Docker exec failed: {result.stderr}")
+            # 2. BUILD DETERMINISTIC SLIDES
+            project_title = scope_data.get("overview", {}).get("Project Name", "Project Scope")
+            mapped_slides = self._map_scope_to_slides(presentation_id, scope_data, template)
             
-            response_data = json.loads(result.stdout)
-            logger.info(f"✅ Presenton generated presentation: {response_data.get('presentation_id')}")
-            return response_data
+            update_payload = {
+                "id": presentation_id,
+                "title": project_title,
+                "n_slides": len(mapped_slides),
+                "slides": mapped_slides
+            }
+            
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+                json.dump(update_payload, f)
+                temp_update_file = f.name
+                
+            subprocess.run(
+                ["docker", "cp", temp_update_file, "scopebot-presenton:/tmp/presenton_update.json"],
+                check=True, capture_output=True
+            )
+            os.unlink(temp_update_file)
+            
+            update_result = subprocess.run(
+                [
+                    "docker", "exec", "scopebot-presenton",
+                    "curl", "-s", "-X", "PATCH",
+                    "http://localhost:8000/api/v1/ppt/presentation/update",
+                    "-H", "Content-Type: application/json",
+                    "-d", "@/tmp/presenton_update.json"
+                ],
+                capture_output=True, text=True, timeout=60
+            )
+            
+            if update_result.returncode != 0:
+                raise Exception(f"Update failed: {update_result.stderr}")
+                
+            # 3. EXPORT PRESENTATION
+            export_payload = {
+                "id": presentation_id,
+                "export_as": "pptx"
+            }
+            
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+                json.dump(export_payload, f)
+                temp_export_file = f.name
+                
+            subprocess.run(
+                ["docker", "cp", temp_export_file, "scopebot-presenton:/tmp/presenton_export.json"],
+                check=True, capture_output=True
+            )
+            os.unlink(temp_export_file)
+            
+            export_result = subprocess.run(
+                [
+                    "docker", "exec", "scopebot-presenton",
+                    "curl", "-s", "-X", "POST",
+                    "http://localhost:8000/api/v1/ppt/presentation/export",
+                    "-H", "Content-Type: application/json",
+                    "-d", "@/tmp/presenton_export.json"
+                ],
+                capture_output=True, text=True, timeout=600
+            )
+            
+            if export_result.returncode != 0:
+                raise Exception(f"Export failed: {export_result.stderr}")
+                
+            response_data = json.loads(export_result.stdout)
+            
+            # Use original Presenton response structure
+            final_response = {
+                "presentation_id": presentation_id,
+                "path": response_data.get('path', ''),
+                "edit_path": response_data.get('edit_path', '')
+            }
+            
+            logger.info(f"✅ Presenton generated deterministic presentation: {presentation_id}")
+            return final_response
             
         except Exception as e:
-            logger.error(f"Presenton generation failed: {e}")
+            logger.error(f"Deterministic Presenton generation failed: {e}")
             raise
-    
-    def _format_scope_for_presenton(self, scope: Dict[str, Any], rfp_text: str = "") -> str:
-        """
-        Convert project scope JSON to Presenton-friendly text format.
-        Includes original RFP content for full context.
+            
+    def _map_scope_to_slides(self, presentation_id: str, scope: Dict[str, Any], layout_group: str) -> list:
+        """Deterministically map project scope data directly to aesthetic Swift slide components"""
+        import uuid
+        slides = []
+        slide_index = 0
+        from datetime import datetime
+        website_domain = "www.scopesolution.com"
         
-        Args:
-            scope: Project scope dictionary
-            rfp_text: Original RFP/requirements document text
+        def add_slide(layout_id: str, content: dict):
+            nonlocal slide_index
+            slides.append({
+                "id": str(uuid.uuid4()),
+                "presentation": presentation_id,
+                "layout_group": layout_group,
+                "layout": f"{layout_group}:{layout_id}",
+                "index": slide_index,
+                "content": content
+            })
+            slide_index += 1
+            
+        # 1. INTRO SLIDE (swift:IntroSlideLayout)
+        project_name = scope.get("overview", {}).get("Project Name", "Project Outline")
+        desc = scope.get("overview", {}).get("Description", "Project Scope Overview")
+        add_slide("IntroSlideLayout", {
+            "title": project_name,
+            "subtitlePrefix": "Project",
+            "subtitleAccent": "Scope",
+            "paragraph": desc[:200] if len(desc) > 200 else desc,
+            "website": website_domain,
+            "introCard": {
+                "enabled": True,
+                "name": "Scoping Engine",
+                "date": datetime.now().strftime("%b %d, %Y")
+            },
+            "media": {
+                "type": "image",
+                "image": {
+                    "__image_url__": "https://images.unsplash.com/photo-1542744173-8e7e53415bb0?q=80&w=1200",
+                    "__image_prompt__": "Professional consulting overview strategy"
+                }
+            }
+        })
         
-        Returns:
-            Formatted text content for Presenton
-        """
-        lines = []
+        # 2. EXECUTIVE SUMMARY (swift:MetricsNumbers)
+        exec_summary = scope.get("executive_summary", "Executive overview mapping strategic goals.")
+        domain = scope.get("overview", {}).get("Domain", "Enterprise")
+        complexity = scope.get("overview", {}).get("Complexity", "Medium")
+        duration = scope.get("overview", {}).get("Duration", "TBD")
+        cost = scope.get("total_cost")
+        cost_str = f"${cost:,.0f}" if isinstance(cost, (int, float)) else str(cost or "TBD")
         
-        # ===== SECTION 1: Original RFP Content =====
-        if rfp_text:
-            lines.append("# Original Requirements & Context")
-            lines.append("\n## Source Document")
-            # Limit RFP to reasonable size (first 8000 chars ≈ 2000 words)
-            rfp_preview = rfp_text[:8000]
-            if len(rfp_text) > 8000:
-                rfp_preview += "\n\n[... document continues ...]"
-            lines.append(f"\n{rfp_preview}")
-            lines.append("\n---\n")
+        if exec_summary:
+            add_slide("MetricsNumbers", {
+                "title": "Executive Summary",
+                "leftTitle": "Project Context\n& High-level Details",
+                "leftBody": exec_summary[:220] if len(exec_summary) > 220 else exec_summary,
+                "website": website_domain,
+                "metrics": [
+                    {
+                        "value": domain[:8] if len(domain) > 8 else domain,
+                        "line1": "Target",
+                        "line2": "Domain",
+                        "description": f"Domain focus: {domain}".upper()
+                    },
+                    {
+                        "value": complexity[:8],
+                        "line1": "Project",
+                        "line2": "Complexity",
+                        "description": f"Overall delivery difficulty rated as {complexity}"
+                    },
+                    {
+                        "value": cost_str[:8] if len(cost_str) > 5 else cost_str,
+                        "line1": "Budget",
+                        "line2": "Estimate",
+                        "description": f"With an estimated timeline of {duration}"
+                    }
+                ]
+            })
 
-        # [CRITICAL INSTRUCTION]
-        lines.append("\n[INSTRUCTION TO AI]:")
-        lines.append("1. **NO PLACEHOLDERS**: Never leave text like '[Insert Name]', '[Date]', 'XX', or '[TBD]'.")
-        lines.append("2. **FILL GAPS**: If a piece of data is missing, ESTIMATE it based on the project context or use generic professional terms (e.g., 'To Be Determined during Planning').")
-        lines.append("3. **REAL NAMES**: For 'Team', if no specific names are provided, invent realistic personas (e.g., 'Sarah Chen - Lead Architect') to make the presentation look complete.")
-        lines.append("4. **COMPLETE SENTENCES**: Do not use fragments. Write polished, professional copy.")
-        lines.append("\n---\n")
-        
-        # ===== SECTION 2: Project Overview =====
-        if overview := scope.get("overview"):
-            project_name = overview.get("Project Name", "Project Presentation")
-            lines.append(f"# {project_name}")
-            
-            if description := overview.get("Description"):
-                lines.append(f"\n{description}")
-            
-            if domain := overview.get("Domain"):
-                lines.append(f"\n**Domain:** {domain}")
-            
-            if tech_stack := overview.get("Tech Stack"):
-                lines.append(f"\n**Technology Stack:** {tech_stack}")
-            
-            if complexity := overview.get("Complexity"):
-                lines.append(f"\n**Complexity:** {complexity}")
-            
-            if duration := overview.get("Duration"):
-                lines.append(f"\n**Duration:** {duration}")
-            
-            if use_cases := overview.get("Use Cases"):
-                lines.append(f"\n**Use Cases:** {use_cases}")
-            
-            if compliance := overview.get("Compliance"):
-                lines.append(f"\n**Compliance:** {compliance}")
-        
-        # ===== SECTION 3: Executive Summary =====
-        if exec_summary := scope.get("executive_summary"):
-            lines.append("\n## Executive Summary")
-            lines.append(f"\n{exec_summary}")
-        
-        # ===== SECTION 4: Project Summary =====
-        if summary := scope.get("project_summary"):
-            lines.append("\n## Project Summary")
-            if isinstance(summary, dict):
-                for key, value in summary.items():
-                    if value:
-                        lines.append(f"\n**{key}:** {value}")
-            else:
-                lines.append(f"\n{summary}")
-        
-        # ===== SECTION 5: Objectives =====
+        # 3. KEY OBJECTIVES (swift:image-list-description-slide)
         if objectives := scope.get("objectives"):
-            lines.append("\n## Objectives")
-            if isinstance(objectives, list):
-                for obj in objectives:
-                    lines.append(f"- {obj}")
-            else:
-                lines.append(f"\n{objectives}")
-        
-        # ===== SECTION 6: Key Activities =====
+            obj_list = objectives if isinstance(objectives, list) else [objectives]
+            
+            # Map up to 3 objectives max for this layout
+            items = []
+            for idx, obj in enumerate(obj_list[:3]):
+                items.append({
+                    "title": f"Objective {idx+1}",
+                    "description": obj[:140],
+                    "image": {
+                        "__image_url__": f"https://images.unsplash.com/photo-1551288049-bebda4e38f71?q=80&w=400&sig={idx}",
+                        "__image_prompt__": "Strategic goal execution abstract"
+                    }
+                })
+                
+            # Fallback if there are less than 3 objectives to satisfy the min constraints of the schema
+            while len(items) < 3:
+                items.append({
+                    "title": "Additional Goal",
+                    "description": "System optimization and continued enhancement alignment.",
+                    "image": {
+                        "__image_url__": f"https://images.unsplash.com/photo-1454165804606-c3d57bc86b40?q=80&w=400",
+                        "__image_prompt__": "General target goal"
+                    }
+                })
+
+            add_slide("image-list-description-slide", {
+                "titleLine1": "Project",
+                "titleLine2": "Objectives",
+                "description": "The primary goals and intended outcomes required for the successful delivery of this engagement.",
+                "items": items,
+                "website": website_domain
+            })
+
+        # 4. ACTIVITIES (swift:Timeline) -> 4 items per page
         if activities := scope.get("activities"):
-            lines.append("\n## Key Activities & Deliverables")
-            if isinstance(activities, list):
-                for i, activity in enumerate(activities, 1):
-                    if isinstance(activity, dict):
-                        activity_name = activity.get("Activity", activity.get("activity", ""))
-                        deliverable = activity.get("Deliverable", activity.get("deliverable", ""))
-                        effort = activity.get("Effort (Months)", activity.get("effort", ""))
-                        
-                        if activity_name:
-                            lines.append(f"\n### {i}. {activity_name}")
-                            if deliverable:
-                                lines.append(f"**Deliverable:** {deliverable}")
-                            if effort:
-                                lines.append(f"**Effort:** {effort} months")
+            act_list = activities if isinstance(activities, list) else []
+            chunk_size = 4
+            chunks = [act_list[i:i + chunk_size] for i in range(0, len(act_list), chunk_size)]
+            
+            for i, chunk in enumerate(chunks):
+                items = []
+                for idx, act in enumerate(chunk):
+                    if isinstance(act, dict):
+                        name = act.get("Activities", act.get("name", act.get("activity", "Task")))
+                        desc = act.get("Deliverable", act.get("deliverable", "Details TBD"))
+                        effort = act.get("Effort (Months)", act.get("effort", ""))
+                        if effort:
+                            desc = f"{effort} months. {desc}"
                     else:
-                        lines.append(f"{i}. {activity}")
+                        name = str(act)
+                        desc = "Activity detail"
+                        
+                    items.append({
+                        "year": f"P{i*chunk_size + idx + 1}", # Phase/Num
+                        "heading": name[:28],
+                        "body": desc[:160],
+                        "icon": {"__icon_url__": "https://presenton-public.s3.ap-southeast-1.amazonaws.com/static/icons/bold/clipboard-text-bold.svg", "__icon_query__": "timeline phase"}
+                    })
+                    
+                add_slide("Timeline", {
+                    "title": f"Detailed Roadmap{f' ({i+1})' if len(chunks)>1 else ''}",
+                    "subtitle": "Breakdown of the core phases, expected activities, and deliverables mapped sequentially.",
+                    "items": items,
+                    "website": website_domain
+                })
 
-        # [REMOVED] Section 6.5 Detailed Roadmap - Replaced by paginated Section 8.5
-        
-        # ===== SECTION 6.6: Architecture Diagram =====
-        if arch_diagram := scope.get("architecture_diagram_url"):
-            lines.append("\n## System Architecture")
-            lines.append(f"Architecture Diagram: {arch_diagram}")
-            lines.append("(Please verify this diagram aligns with the project scope)")
-
-        # ===== SECTION 12: Historical Context =====
-        lines.append("\n## Estimation Context")
-        lines.append("Timelines and costs are estimated based on requirements and, where available, adjusted using historical performance data from similar closed projects.")
-        if scope.get("discount_percentage"):
-             lines.append(f"Note: A {scope['discount_percentage']}% discount has been applied to the cost estimates.")
-        
-        # ===== SECTION 7: Team & Resources =====
+        # 5. TEAM & RESOURCES (swift:SwiftTableOfContents) -> 10 items max
         if resourcing := scope.get("resourcing_plan"):
-            if isinstance(resourcing, list) and resourcing:
-                # Paginate Team: Max 8 per slide
-                chunk_size = 8
+            if isinstance(resourcing, list):
+                chunk_size = 10
                 chunks = [resourcing[i:i + chunk_size] for i in range(0, len(resourcing), chunk_size)]
                 
                 for i, chunk in enumerate(chunks):
-                    suffix = f" (Part {i+1})" if len(chunks) > 1 else ""
-                    lines.append(f"\n## Team & Resources{suffix}")
-                    for resource in chunk:
-                        if isinstance(resource, dict):
-                            role = resource.get("Resources", resource.get("role", ""))
-                            effort = resource.get("Effort (Months)", resource.get("effort", ""))
-                            if role:
-                                effort_str = f" ({effort} months)" if effort else ""
-                                # Use compact bullet points for better fit
-                                lines.append(f"- **{role}**{effort_str}")
-        
-        # ===== SECTION 8: Timeline Overview =====
-        if timeline := scope.get("timeline"):
-            lines.append("\n## Project Phases")
-            if isinstance(timeline, list):
-                for phase in timeline:
-                    if isinstance(phase, dict):
-                        phase_name = phase.get("Phase", phase.get("phase", ""))
-                        start = phase.get("Start Date", phase.get("start", ""))
-                        end = phase.get("End Date", phase.get("end", ""))
-                        if phase_name:
-                            lines.append(f"\n**{phase_name}**")
-                            if start and end:
-                                lines.append(f"Duration: {start} to {end}")
-            
-        # ===== SECTION 8.5: Detailed Roadmap (Paginated) =====
-        if activities := scope.get("activities"):
-             if isinstance(activities, list) and activities:
-                 # Paginate Roadmap: Max 10 per slide for table visibility
-                 chunk_size = 10
-                 chunks = [activities[i:i + chunk_size] for i in range(0, len(activities), chunk_size)]
-                 
-                 for i, chunk in enumerate(chunks):
-                     suffix = f" (Part {i+1})" if len(chunks) > 1 else ""
-                     lines.append(f"\n## Detailed Schedule{suffix}")
-                     lines.append("| Activity | Start | End |")
-                     lines.append("| :--- | :--- | :--- |")
-                     for act in chunk:
-                         if isinstance(act, dict):
-                             name = act.get("Activities", act.get("name", "Task"))
-                             # Truncate very long names
-                             if len(name) > 50:
-                                 name = name[:47] + "..."
-                             start = act.get("Start Date", "-")
-                             end = act.get("End Date", "-")
-                             if start != "-" and end != "-":
-                                 lines.append(f"| {name} | {start} | {end} |")
+                    items = []
+                    for res in chunk:
+                        if isinstance(res, dict):
+                            role = res.get("Resources", res.get("role", "Resource"))
+                            effort = res.get("Effort (Months)", res.get("effort", ""))
+                            items.append({
+                                "title": f"{role} ({effort}m)"[:40],
+                                "description": "Required project allocation"
+                            })
+                            
+                    if items:
+                        add_slide("SwiftTableOfContents", {
+                            "title": f"Team Requirements{f' ({i+1})' if len(chunks)>1 else ''}",
+                            "items": items,
+                            "website": website_domain
+                        })
 
-        # ===== SECTION 9: Risks & Mitigation =====
-        if risks := scope.get("risks"):
-            # Paginate Risks: Max 4 per slide (they are text heavy)
-            if isinstance(risks, list) and risks:
-                chunk_size = 4
-                chunks = [risks[i:i + chunk_size] for i in range(0, len(risks), chunk_size)]
-                
-                for i, chunk in enumerate(chunks):
-                    suffix = f" (Part {i+1})" if len(chunks) > 1 else ""
-                    lines.append(f"\n## Risks & Mitigation{suffix}")
-                    for risk in chunk:
-                        if isinstance(risk, dict):
-                            risk_desc = risk.get("Risk", risk.get("risk", ""))
-                            mitigation = risk.get("Mitigation", risk.get("mitigation", ""))
-                            if risk_desc:
-                                lines.append(f"\n**Risk:** {risk_desc}")
-                                if mitigation:
-                                    lines.append(f"**Mitigation:** {mitigation}")
-        
-        # ===== SECTION 9.5: Graphical Timeline (Mermaid) =====
-        if activities := scope.get("activities"):
-             if isinstance(activities, list) and activities:
-                 mermaid_code = self._generate_mermaid_gantt(activities)
-                 if mermaid_code:
-                     lines.append("\n## Visual Timeline")
-                     lines.append("```mermaid")
-                     lines.append(mermaid_code)
-                     lines.append("```")
-                     lines.append("\n[INSTRUCTION TO AI]: Render the above Mermaid code as a VISUAL GANTT CHART on a dedicated slide. Do not show the code text.")
+        return slides
 
-        # ===== SECTION 10: Cost Estimate =====
-        if cost := scope.get("total_cost"):
-            lines.append("\n## Cost Estimate")
-            lines.append(f"\n**Total Project Cost:** ${cost:,.2f}" if isinstance(cost, (int, float)) else f"\n**Total Project Cost:** {cost}")
-        
-        # ===== SECTION 11: Architecture =====
-        if arch_diagram := scope.get("architecture_diagram"):
-            lines.append("\n## System Architecture")
-            lines.append("Detailed architecture diagram available in project documentation.")
-        
-        return "\n".join(lines)
-    
     def get_external_url(self) -> str:
         """Get the external URL for accessing Presenton UI"""
         return PRESENTON_EXTERNAL_URL
@@ -356,41 +368,6 @@ class PresentonClient:
     def get_edit_url(self, presentation_id: str) -> str:
         """Get the full external URL to edit a presentation"""
         return f"{PRESENTON_EXTERNAL_URL}/presentation?id={presentation_id}"
-
-    def _generate_mermaid_gantt(self, activities: list) -> str:
-        """
-        Generate Mermaid Gantt chart syntax from activities list.
-        Limits to top 20 items to prevent rendering issues.
-        """
-        try:
-            mermaid = ["gantt", "    title Project Timeline", "    dateFormat YYYY-MM-DD", "    axisFormat %m/%d"]
-            mermaid.append("    section Development")
-            
-            count = 0
-            for act in activities:
-                if isinstance(act, dict):
-                    name = act.get("Activities", act.get("name", "Task"))
-                    # Sanitize name: remove colons, limited length
-                    clean_name = name.replace(":", "-").replace("#", "").replace('"', '').strip()[:30]
-                    
-                    start = act.get("Start Date", "-")
-                    end = act.get("End Date", "-")
-                    
-                    # Validate date format roughly (YYYY-MM-DD)
-                    if start and end and len(start) == 10 and len(end) == 10 and start != "-" and end != "-":
-                        mermaid.append(f"    {clean_name} : {start}, {end}")
-                        count += 1
-                        
-                if count >= 20: # Limit to avoid huge charts
-                    break
-            
-            if count == 0:
-                return ""
-                
-            return "\n".join(mermaid)
-        except Exception as e:
-            logger.warning(f"Failed to generate mermaid chart: {e}")
-            return ""
 
 
 # Singleton instance

@@ -129,11 +129,64 @@ class Project(ProjectBase):
 
 
 # SCOPE & GENERATION SCHEMAS
+from pydantic import BaseModel, Field
+
+# ---------------------------------------------------------
+# LLM Structured Output Schemas (for Deterministic Scoping)
+# ---------------------------------------------------------
+
+class TechItem(BaseModel):
+    """An individual technology recommendation."""
+    name: str = Field(description="Specific technology name (e.g., 'React 18', 'Azure Data Factory')")
+    classification: str = Field(description="Must be exactly 'Explicit' or 'Implicit'")
+    justification: str = Field(description="1-2 sentences explaining why this technology is recommended. Mandatory if Implicit.")
+
+class TechCategory(BaseModel):
+    """A category of technologies in the recommended tech stack."""
+    category: str = Field(description="Category name (e.g., 'Frontend', 'Backend', 'Database', 'Infrastructure', 'AI/ML', 'DevOps')")
+    technologies: List[TechItem] = Field(description="List of specific technologies in this category")
+
+class PlanOutput(BaseModel):
+    """Phase 1: High-level project plan and team composition."""
+    phases: List[str] = Field(description="Names of the high-level project phases, in order (e.g., ['Discovery', 'Design', 'Development', 'Testing'])")
+    team_roles: List[str] = Field(description="List of specific roles required for this project, matching the provided rate cards.")
+    executive_summary: str = Field(description="A concise executive summary of the project goal.")
+    key_deliverables: List[str] = Field(description="List of 3-5 major tangible deliverables.")
+    complexity: str = Field(
+        default="Medium",
+        description="Overall project complexity: must be exactly one of 'Simple', 'Medium', or 'High'. Base this on the number of integrations, team size needed, regulatory requirements, and technical depth."
+    )
+    complexity_reasoning: str = Field(
+        default="",
+        description="One sentence explaining why this complexity level was chosen."
+    )
+    recommended_tech_stack: List[TechCategory] = Field(
+        default=[],
+        description="Recommended technology stack organized by category. Based on the domain, RFP content, and best practices. Include: Frontend, Backend, Database, Infrastructure, DevOps, and optionally AI/ML or Mobile if relevant."
+    )
+
+class ActivityItem(BaseModel):
+    """A granular activity belonging to Phase 2 schedule generation."""
+    name: str = Field(description="Name of the specific activity/task.")
+    phase: str = Field(description="Which phase this belongs to (must match a phase from Phase 1).")
+    owner: str = Field(description="The primary role responsible for this task (must match a role from Phase 1).")
+    effort_months: float = Field(description="Estimated pure effort required in months (e.g., 0.5 for 2 weeks).")
+    dependencies: List[str] = Field(description="Names of other activities that MUST be completed before this one can start. Empty list if none.")
+
+class ScheduleOutput(BaseModel):
+    """Phase 2: Granular schedule with dependencies but no math/dates."""
+    activities: List[ActivityItem] = Field(description="List of all project activities needed to deliver the project.")
+
+
+# ---------------------------------------------------------
+# API Response Schemas
+# ---------------------------------------------------------
+
 class GeneratedScopeResponse(BaseModel):
     overview: Dict[str, Any] = {}
     activities: List[Dict[str, Any]] = []
     resourcing_plan: List[Dict[str, Any]] = []
-    architecture_diagram: Optional[str] = None
+    architecture_diagram: Optional[Any] = None
     discount_percentage: Optional[float] = None  # Add discount support
     _finalized: Optional[bool] = None
 
@@ -143,7 +196,7 @@ class MessageResponse(BaseModel):
     scope: Optional[Dict[str, Any]] = None
     file_url: Optional[str] = None
     has_finalized_scope: Optional[bool] = None
-    architecture_diagram: Optional[str] = None
+    architecture_diagram: Optional[Any] = None
 
 
 class RegenerateScopeRequest(BaseModel):

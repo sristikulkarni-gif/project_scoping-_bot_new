@@ -8,23 +8,25 @@ export default function Layout() {
   const [mobileOpen, setMobileOpen] = useState(false);
 
   return (
-    <div className="flex h-screen overflow-hidden bg-[#f8fafc] dark:bg-dark-background">
+    <div className="flex h-screen overflow-hidden" style={{ background: "#0a0d1a" }}>
       {/* Sidebar */}
       <Sidebar isOpen={isOpen} setIsOpen={setIsOpen} mobileOpen={mobileOpen} />
 
       {/* Main Content */}
-      <div className="flex flex-col flex-1 h-screen overflow-hidden">
+      <div className="flex flex-col flex-1 h-screen overflow-hidden min-w-0">
         <Header
           onToggleSidebar={() => setMobileOpen(!mobileOpen)}
           isSidebarOpen={mobileOpen}
         />
-        <main className="flex-1 p-6 md:p-8 overflow-y-auto relative bg-[#f8fafc] dark:bg-dark-background">
-          <div className="max-w-7xl mx-auto relative z-10 space-y-6">
-            <Outlet /> {/* renders nested routes */}
+        <main
+          className="flex-1 overflow-y-auto scrollbar-thin"
+          style={{ background: "#0a0d1a" }}
+        >
+          <div className="max-w-7xl mx-auto p-6 md:p-8 space-y-6">
+            <Outlet />
           </div>
         </main>
       </div>
     </div>
   );
 }
-

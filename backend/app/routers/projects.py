@@ -329,14 +329,10 @@ async def regenerate_scope_with_instructions(
         logger.info(f"✅ Explicitly saved regenerated scope to {blob_name}")
 
 
-        # Return structured response
-        return schemas.GeneratedScopeResponse(
-            overview=regen_scope.get("overview", {}),
-            activities=regen_scope.get("activities", []),
-            resourcing_plan=regen_scope.get("resourcing_plan", []),
-            architecture_diagram=regen_scope.get("architecture_diagram", None),
-            discount_percentage=regen_scope.get("discount_percentage", None),
-        )
+        # Return full scope so all changes (add/remove/modify) reach the frontend
+        from fastapi.responses import JSONResponse
+        return JSONResponse(content=regen_scope)
+
 
     except Exception as e:
         logger.error(f"Scope regeneration failed for {project_id}: {e}")
@@ -813,3 +809,4 @@ async def close_project(
     except Exception as e:
         logger.error(f"Failed to close project {project_id}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to close project: {str(e)}")
+

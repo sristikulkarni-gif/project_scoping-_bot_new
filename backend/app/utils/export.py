@@ -453,86 +453,92 @@ async def generate_pdf(scope: Dict[str, Any]) -> io.BytesIO:
     arch_path = data.get("architecture_diagram")
     logger.info(f"🔍 Architecture diagram path in scope data: {arch_path}")
     if arch_path:
-        img_bytes = None
-        is_svg = arch_path.lower().endswith(".svg")
-        
-        try:
-            logger.info(f"📊 Attempting to download architecture diagram from: {arch_path}")
-            # Add timeout protection for blob download (15 seconds max)
-            import asyncio
-            try:
-                img_bytes = await asyncio.wait_for(
-                    azure_blob.download_bytes(arch_path),
-                    timeout=15.0
-                )
-            except Exception as e:
-                logger.warning(f"⚠️ Architecture diagram download failed: {e}")
-                # Fallback check for SVG if PNG failed
-                if not is_svg and arch_path.endswith(".png"):
-                    svg_path = arch_path[:-4] + ".svg"
-                    if await azure_blob.blob_exists(svg_path):
-                        is_svg = True
-                        logger.info(f"Found fallback SVG at {svg_path}")
-
-        except Exception as e:
-            logger.warning(f"Failed to process architecture diagram logic: {e}")
-
-        if is_svg:
-             # SVG Handling for PDF
-            elems.append(Paragraph("<b>System Architecture</b>", styles["Heading2"]))
-            elems.append(Paragraph("[Architecture Diagram is in SVG format and cannot be embedded in this PDF version. Please view the high-resolution diagram in the web application.]", wrap))
-            elems.append(Spacer(1, 0.4 * cm))
+        if isinstance(arch_path, str):
+            img_bytes = None
+            is_svg = arch_path.lower().endswith(".svg")
             
-        elif img_bytes and len(img_bytes) > 0:
             try:
-                img_buf = io.BytesIO(img_bytes)
-                # Section header
-                elems.append(Paragraph("<b>System Architecture</b>", styles["Heading2"]))
-
-                # ---- Improved image rendering with height constraint ----
-                img = RLImage(img_buf)
-
-                # Define maximum dimensions that fit within page
-                max_width = 780  # fits within current A4 landscape scaling
-                max_height = 1000  # leave room for margins and other content
-
-                # Calculate scaling to fit within both width and height constraints
-                width_scale = max_width / float(img.imageWidth)
-                height_scale = max_height / float(img.imageHeight)
-
-                # Use the smaller scale factor to ensure image fits both dimensions
-                scale = min(width_scale, height_scale)
-
-                new_width = img.imageWidth * scale
-                new_height = img.imageHeight * scale
-
-                img.drawWidth = new_width
-                img.drawHeight = new_height
-
-                # Left align cleanly using Table (ReportLab trick)
-                img_table = Table([[img]], colWidths=[new_width], hAlign="LEFT")
-                img_table.setStyle(TableStyle([
-                    ("ALIGN", (0, 0), (-1, -1), "LEFT"),
-                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                    ("LEFTPADDING", (0, 0), (-1, -1), 0),
-                    ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-                    ("TOPPADDING", (0, 0), (-1, -1), 0),
-                    ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
-                ]))
-
-                elems.append(img_table)
-                elems.append(Spacer(1, 0.6 * cm))
-                logger.info(f"✅ Architecture diagram embedded successfully")
+                logger.info(f"📊 Attempting to download architecture diagram from: {arch_path}")
+                # Add timeout protection for blob download (15 seconds max)
+                import asyncio
+                try:
+                    img_bytes = await asyncio.wait_for(
+                        azure_blob.download_bytes(arch_path),
+                        timeout=15.0
+                    )
+                except Exception as e:
+                    logger.warning(f"⚠️ Architecture diagram download failed: {e}")
+                    # Fallback check for SVG if PNG failed
+                    if not is_svg and arch_path.endswith(".png"):
+                        svg_path = arch_path[:-4] + ".svg"
+                        if await azure_blob.blob_exists(svg_path):
+                            is_svg = True
+                            logger.info(f"Found fallback SVG at {svg_path}")
 
             except Exception as e:
-                logger.error(f"❌ Failed to embed architecture diagram: {e}")
-                # Add a notice in PDF that diagram is unavailable
+                logger.warning(f"Failed to process architecture diagram logic: {e}")
+
+            if is_svg:
+                 # SVG Handling for PDF
                 elems.append(Paragraph("<b>System Architecture</b>", styles["Heading2"]))
-                elems.append(Paragraph(
-                    "<i>Architecture diagram unavailable (failed to load from storage)</i>",
-                    wrap
-                ))
-                elems.append(Spacer(1, 0.6 * cm))
+                elems.append(Paragraph("[Architecture Diagram is in SVG format and cannot be embedded in this PDF version. Please view the high-resolution diagram in the web application.]", wrap))
+                elems.append(Spacer(1, 0.4 * cm))
+                
+            elif img_bytes and len(img_bytes) > 0:
+                try:
+                    img_buf = io.BytesIO(img_bytes)
+                    # Section header
+                    elems.append(Paragraph("<b>System Architecture</b>", styles["Heading2"]))
+
+                    # ---- Improved image rendering with height constraint ----
+                    img = RLImage(img_buf)
+
+                    # Define maximum dimensions that fit within page
+                    max_width = 780  # fits within current A4 landscape scaling
+                    max_height = 1000  # leave room for margins and other content
+
+                    # Calculate scaling to fit within both width and height constraints
+                    width_scale = max_width / float(img.imageWidth)
+                    height_scale = max_height / float(img.imageHeight)
+
+                    # Use the smaller scale factor to ensure image fits both dimensions
+                    scale = min(width_scale, height_scale)
+
+                    new_width = img.imageWidth * scale
+                    new_height = img.imageHeight * scale
+
+                    img.drawWidth = new_width
+                    img.drawHeight = new_height
+
+                    # Left align cleanly using Table (ReportLab trick)
+                    img_table = Table([[img]], colWidths=[new_width], hAlign="LEFT")
+                    img_table.setStyle(TableStyle([
+                        ("ALIGN", (0, 0), (-1, -1), "LEFT"),
+                        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                        ("TOPPADDING", (0, 0), (-1, -1), 0),
+                        ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+                    ]))
+
+                    elems.append(img_table)
+                    elems.append(Spacer(1, 0.6 * cm))
+                    logger.info(f"✅ Architecture diagram embedded successfully")
+
+                except Exception as e:
+                    logger.error(f"❌ Failed to embed architecture diagram: {e}")
+                    # Add a notice in PDF that diagram is unavailable
+                    elems.append(Paragraph("<b>System Architecture</b>", styles["Heading2"]))
+                    elems.append(Paragraph(
+                        "<i>Architecture diagram unavailable (failed to load from storage)</i>",
+                        wrap
+                    ))
+                    elems.append(Spacer(1, 0.6 * cm))
+        else:
+            # Handle the case where architecture_diagram is a dictionary of nodes/edges
+            elems.append(Paragraph("<b>System Architecture</b>", styles["Heading2"]))
+            elems.append(Paragraph("[Interactive Architecture Diagram is provided in data format and can be viewed in the web application.]", wrap))
+            elems.append(Spacer(1, 0.4 * cm))
 
     # -------- Overview --------
     ov = data.get("overview", {})

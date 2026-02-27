@@ -177,7 +177,7 @@ Now, analyze the RFP and create an excellent project scope!
 
 # Agent configuration parameters
 AGENT_CONFIG = {
-    "temperature": 0.7,  # Balance between creativity and consistency
+    "temperature": 0,  # 0 = fully deterministic: same input always produces same output
     "max_iterations": 15,  # Maximum tool calls before forcing completion
     "max_execution_time": 120,  # Maximum seconds for agent execution
     "verbose": True,  # Log agent reasoning steps

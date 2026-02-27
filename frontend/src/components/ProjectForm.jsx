@@ -8,20 +8,20 @@ import { toast } from "react-toastify";
 import * as XLSX from "xlsx-js-style";
 
 const DOMAIN_COMPLIANCE_MAP = {
-  fintech: ["RBI-KYC-AML","NPCI-UPI","UIDAI-Aadhaar","DPDP-2023","CERT-In-2022","IT-Rules-2021","PCI-DSS","ISO-27001","SOC-2"],
-  healthtech: ["ABDM-NDHM","NABH","DPDP-2023","CERT-In-2022","IT-Rules-2021","ISO-27001"],
-  govtech: ["UIDAI-Aadhaar","IT-Rules-2021","CERT-In-2022","DPDP-2023","WCAG"],
-  ecommerce: ["ONDC","DPDP-2023","IT-Rules-2021","CERT-In-2022","PCI-DSS","ISO-27001"],
-  insurtech: ["IRDAI-IT","DPDP-2023","CERT-In-2022","ISO-27001","SOC-2"],
-  edtech: ["DPDP-2023","IT-Rules-2021","CERT-In-2022","WCAG"],
-  "smart mobility": ["NCMC","RBI-KYC-AML","NPCI-UPI","DPDP-2023"],
-  "b2b saas": ["ISO-27001","SOC-2","DPDP-2023"],
-  agritech: ["FSSAI","DPDP-2023"],
-  logistics: ["ISO-27001","SOC-2","DPDP-2023"],
-  "energy/utilities": ["CEA-CERC","DPDP-2023","CERT-In-2022"],
-  civictech: ["IT-Rules-2021","CERT-In-2022","DPDP-2023","WCAG"],
-  regtech: ["RBI-KYC-AML","UIDAI-Aadhaar","DPDP-2023","ISO-27001"],
-  other: ["DPDP-2023","CERT-In-2022","IT-Rules-2021"],
+  fintech: ["RBI-KYC-AML", "NPCI-UPI", "UIDAI-Aadhaar", "DPDP-2023", "CERT-In-2022", "IT-Rules-2021", "PCI-DSS", "ISO-27001", "SOC-2"],
+  healthtech: ["ABDM-NDHM", "NABH", "DPDP-2023", "CERT-In-2022", "IT-Rules-2021", "ISO-27001"],
+  govtech: ["UIDAI-Aadhaar", "IT-Rules-2021", "CERT-In-2022", "DPDP-2023", "WCAG"],
+  ecommerce: ["ONDC", "DPDP-2023", "IT-Rules-2021", "CERT-In-2022", "PCI-DSS", "ISO-27001"],
+  insurtech: ["IRDAI-IT", "DPDP-2023", "CERT-In-2022", "ISO-27001", "SOC-2"],
+  edtech: ["DPDP-2023", "IT-Rules-2021", "CERT-In-2022", "WCAG"],
+  "smart mobility": ["NCMC", "RBI-KYC-AML", "NPCI-UPI", "DPDP-2023"],
+  "b2b saas": ["ISO-27001", "SOC-2", "DPDP-2023"],
+  agritech: ["FSSAI", "DPDP-2023"],
+  logistics: ["ISO-27001", "SOC-2", "DPDP-2023"],
+  "energy/utilities": ["CEA-CERC", "DPDP-2023", "CERT-In-2022"],
+  civictech: ["IT-Rules-2021", "CERT-In-2022", "DPDP-2023", "WCAG"],
+  regtech: ["RBI-KYC-AML", "UIDAI-Aadhaar", "DPDP-2023", "ISO-27001"],
+  other: ["DPDP-2023", "CERT-In-2022", "IT-Rules-2021"],
 };
 
 export default function ProjectForm({ onSubmit }) {
@@ -43,9 +43,9 @@ export default function ProjectForm({ onSubmit }) {
 
   // Domain Options
   const DOMAIN_OPTIONS = [
-    "Consumer Packaged Goods (CPG)","Banking and Financial Services (BFSI)","Life Sciences and MedTech","Media and AdTech","Industrial and Manufacturing","GovTech","E-Commerce","InsurTech","EdTech",
-    "Smart Mobility","B2B SaaS","AgriTech","Logistics","Energy/Utilities",
-    "CivicTech","RegTech","Other",
+    "Consumer Packaged Goods (CPG)", "Banking and Financial Services (BFSI)", "Life Sciences and MedTech", "Media and AdTech", "Industrial and Manufacturing", "GovTech", "E-Commerce", "InsurTech", "EdTech",
+    "Smart Mobility", "B2B SaaS", "AgriTech", "Logistics", "Energy/Utilities",
+    "CivicTech", "RegTech", "Other",
   ];
 
   // Compliance options
@@ -75,9 +75,9 @@ export default function ProjectForm({ onSubmit }) {
   ];
 
   // handy lists for group actions
-  const INDIA_VALUES  = COMPLIANCE_OPTIONS_IN.map(o => o.value);
+  const INDIA_VALUES = COMPLIANCE_OPTIONS_IN.map(o => o.value);
   const GLOBAL_VALUES = COMPLIANCE_OPTIONS_GLOBAL.map(o => o.value);
-  const ALL_VALUES    = [...INDIA_VALUES, ...GLOBAL_VALUES];
+  const ALL_VALUES = [...INDIA_VALUES, ...GLOBAL_VALUES];
 
   const normalize = (s) => (s || "").toLowerCase().trim();
   const recommendForDomain = useCallback((domain) => {
@@ -105,11 +105,8 @@ export default function ProjectForm({ onSubmit }) {
   const [form, setForm] = useState({
     name: "",
     domain: "",
-    complexity: "",
-    tech_stack: "",
     use_cases: "",
     compliance: [],
-    duration: "",
     files: [],
   });
 
@@ -162,31 +159,31 @@ export default function ProjectForm({ onSubmit }) {
 
   // Group actions (India / Global / All)
   const uniqMerge = (arrA, arrB) => Array.from(new Set([...arrA, ...arrB]));
-  const selectIndia   = () => {
+  const selectIndia = () => {
     const next = uniqMerge(form.compliance, INDIA_VALUES);
     setForm((p) => ({ ...p, compliance: next }));
     setValidationErrors((v) => ({ ...v, compliance: "" }));
   };
-  const selectGlobal  = () => {
+  const selectGlobal = () => {
     const next = uniqMerge(form.compliance, GLOBAL_VALUES);
     setForm((p) => ({ ...p, compliance: next }));
     setValidationErrors((v) => ({ ...v, compliance: "" }));
   };
-  const selectAll     = () => {
+  const selectAll = () => {
     setForm((p) => ({ ...p, compliance: ALL_VALUES }));
     setValidationErrors((v) => ({ ...v, compliance: "" }));
   };
-  const clearIndia    = () => {
+  const clearIndia = () => {
     const next = form.compliance.filter((v) => !INDIA_VALUES.includes(v));
     setForm((p) => ({ ...p, compliance: next }));
     setValidationErrors((v) => ({ ...v, compliance: validateField("compliance", next) }));
   };
-  const clearGlobal   = () => {
+  const clearGlobal = () => {
     const next = form.compliance.filter((v) => !GLOBAL_VALUES.includes(v));
     setForm((p) => ({ ...p, compliance: next }));
     setValidationErrors((v) => ({ ...v, compliance: validateField("compliance", next) }));
   };
-  const clearAll      = () => {
+  const clearAll = () => {
     setForm((p) => ({ ...p, compliance: [] }));
     setValidationErrors((v) => ({ ...v, compliance: "Select at least one compliance need." }));
   };
@@ -263,11 +260,8 @@ export default function ProjectForm({ onSubmit }) {
       setForm({
         name: "",
         domain: "",
-        complexity: "",
-        tech_stack: "",
         use_cases: "",
         compliance: [],
-        duration: "",
         files: [],
       });
       setValidationErrors({});
@@ -353,11 +347,11 @@ export default function ProjectForm({ onSubmit }) {
       prev.map((cat, ci) =>
         ci === catIndex
           ? {
-              ...cat,
-              items: cat.items.map((q, qi) =>
-                qi === qIndex ? { ...q, [field]: value } : q
-              ),
-            }
+            ...cat,
+            items: cat.items.map((q, qi) =>
+              qi === qIndex ? { ...q, [field]: value } : q
+            ),
+          }
           : cat
       )
     );
@@ -521,9 +515,8 @@ export default function ProjectForm({ onSubmit }) {
                 setValidationErrors((prev) => ({ ...prev, name: "" }));
               }
             }}
-            className={`border rounded-lg px-3 py-2 w-full ${
-              validationErrors.name ? "border-red-500 focus:ring-red-500" : "focus:ring-primary"
-            }`}
+            className={`border rounded-lg px-3 py-2 w-full ${validationErrors.name ? "border-red-500 focus:ring-red-500" : "focus:ring-primary"
+              }`}
           />
           {validationErrors.name && <p className="text-red-500 text-sm mt-1">{validationErrors.name}</p>}
         </div>
@@ -537,9 +530,8 @@ export default function ProjectForm({ onSubmit }) {
             onBlur={(e) =>
               setValidationErrors((prev) => ({ ...prev, domain: validateField("domain", e.target.value) }))
             }
-            className={`border rounded-lg px-3 py-2 w-full bg-white dark:bg-dark-card ${
-              validationErrors.domain ? "border-red-500 focus:ring-red-500" : "focus:ring-primary"
-            }`}
+            className={`border rounded-lg px-3 py-2 w-full bg-white dark:bg-dark-card ${validationErrors.domain ? "border-red-500 focus:ring-red-500" : "focus:ring-primary"
+              }`}
           >
             <option value="" >Select Domain </option>
             {DOMAIN_OPTIONS.map((d) => (
@@ -549,42 +541,8 @@ export default function ProjectForm({ onSubmit }) {
           {validationErrors.domain && <p className="text-red-500 text-sm mt-1">{validationErrors.domain}</p>}
         </div>
 
-        {/* Tech Stack */}
-        <div>
-          <input
-            name="tech_stack"
-            placeholder="Tech Stack"
-            value={form.tech_stack}
-            onChange={handleChange}
-            onBlur={(e) =>
-              setValidationErrors((prev) => ({ ...prev, tech_stack: validateField("tech_stack", e.target.value) }))
-            }
-            className={`border rounded-lg px-3 py-2 w-full ${
-              validationErrors.tech_stack ? "border-red-500 focus:ring-red-500" : "focus:ring-primary"
-            }`}
-          />
-          {validationErrors.tech_stack && (
-            <p className="text-red-500 text-sm mt-1">{validationErrors.tech_stack}</p>
-          )}
-        </div>
-        {/* Duration */}
-        <div>
-          <input
-            name="duration"
-            placeholder="Duration (e.g. 6 months) "
-            value={form.duration}
-            onChange={handleChange}
-            onBlur={(e) =>
-              setValidationErrors((prev) => ({ ...prev, duration: validateField("duration", e.target.value) }))
-            }
-            className={`border rounded-lg px-3 py-2 w-full ${
-              validationErrors.duration ? "border-red-500 focus:ring-red-500" : "focus:ring-primary"
-            }`}
-          />
-          {validationErrors.duration && (
-            <p className="text-red-500 text-sm mt-1">{validationErrors.duration}</p>
-          )}
-        </div>
+
+
 
         {/* Use Cases */}
         <div className="md:col-span-2">
@@ -596,9 +554,8 @@ export default function ProjectForm({ onSubmit }) {
             onBlur={(e) =>
               setValidationErrors((prev) => ({ ...prev, use_cases: validateField("use_cases", e.target.value) }))
             }
-            className={`border rounded-lg px-3 py-2 w-full ${
-              validationErrors.use_cases ? "border-red-500 focus:ring-red-500" : "focus:ring-primary"
-            }`}
+            className={`border rounded-lg px-3 py-2 w-full ${validationErrors.use_cases ? "border-red-500 focus:ring-red-500" : "focus:ring-primary"
+              }`}
             rows="3"
           />
           {validationErrors.use_cases && (
@@ -677,19 +634,18 @@ export default function ProjectForm({ onSubmit }) {
                 ),
               }))
             }
-            className={`border rounded-lg px-3 py-1 w-full h-30 bg-white dark:bg-dark-card ${
-              validationErrors.compliance ? "border-red-500 focus:ring-red-500" : "focus:ring-primary"
-            }`}
-          >   
+            className={`border rounded-lg px-3 py-1 w-full h-30 bg-white dark:bg-dark-card ${validationErrors.compliance ? "border-red-500 focus:ring-red-500" : "focus:ring-primary"
+              }`}
+          >
             <option disabled className="bg-primary text-white font-semibold">  Indian Regulations </option>
-              {COMPLIANCE_OPTIONS_IN.map((o) => (
-                <option key={o.value} value={o.value}>{o.label}</option>
-              ))}
-  
+            {COMPLIANCE_OPTIONS_IN.map((o) => (
+              <option key={o.value} value={o.value}>{o.label}</option>
+            ))}
+
             <option disabled className="bg-primary text-white font-semibold">  Global Standards </option>
-              {COMPLIANCE_OPTIONS_GLOBAL.map((o) => (
-                <option key={o.value} value={o.value}>{o.label}</option>
-              ))}
+            {COMPLIANCE_OPTIONS_GLOBAL.map((o) => (
+              <option key={o.value} value={o.value}>{o.label}</option>
+            ))}
           </select>
           <p className="text-xs text-gray-500 mt-1">
             Hold <b>Ctrl</b> to select multiple options.
@@ -724,31 +680,7 @@ export default function ProjectForm({ onSubmit }) {
           )}
         </div>
 
-        {/* Complexity */}
-        <div>
-          <select
-            name="complexity"
-            value={form.complexity}
-            onChange={handleChange}
-            onBlur={(e) =>
-              setValidationErrors((prev) => ({
-                ...prev,
-                complexity: validateField("complexity", e.target.value),
-              }))
-            }
-            className={`border rounded-lg px-3 py-2 w-full bg-white dark:bg-dark-card ${
-              validationErrors.complexity ? "border-red-500 focus:ring-red-500" : "focus:ring-primary"
-            }`}
-          >
-            <option value="">Select Complexity</option>
-            <option value="Simple">Simple</option>
-            <option value="Medium">Medium</option>
-            <option value="High">High</option>
-          </select>
-          {validationErrors.complexity && (
-            <p className="text-red-500 text-sm mt-1">{validationErrors.complexity}</p>
-          )}
-        </div>
+
       </div>
       {/* Company Selector */}
       <div>
@@ -760,9 +692,8 @@ export default function ProjectForm({ onSubmit }) {
             // Clear validation error when user selects a company
             setValidationErrors((prev) => ({ ...prev, company: "" }));
           }}
-          className={`border rounded-lg px-3 py-2 w-full bg-white dark:bg-dark-card ${
-            validationErrors.company ? "border-red-500 focus:ring-red-500" : "focus:ring-primary"
-          }`}
+          className={`border rounded-lg px-3 py-2 w-full bg-white dark:bg-dark-card ${validationErrors.company ? "border-red-500 focus:ring-red-500" : "focus:ring-primary"
+            }`}
         >
           <option value="" disabled>Select a company</option>
           {companies.map((c) => (
@@ -777,17 +708,16 @@ export default function ProjectForm({ onSubmit }) {
         )}
       </div>
 
-      
+
 
       {/* File Upload */}
       <div
         onDrop={scopeLoading ? undefined : handleDrop}
         onDragOver={scopeLoading ? undefined : handleDragOver}
-        className={`md:col-span-2 flex flex-col items-center justify-center w-full p-4 border-2 border-dashed border-gray-300 rounded-lg transition ${
-          scopeLoading
-            ? "opacity-50 cursor-not-allowed bg-gray-100 dark:bg-gray-800"
-            : "hover:border-primary hover:bg-gray-50 dark:hover:bg-dark-surface/40"
-        }`}
+        className={`md:col-span-2 flex flex-col items-center justify-center w-full p-4 border-2 border-dashed border-gray-300 rounded-lg transition ${scopeLoading
+          ? "opacity-50 cursor-not-allowed bg-gray-100 dark:bg-gray-800"
+          : "hover:border-primary hover:bg-gray-50 dark:hover:bg-dark-surface/40"
+          }`}
       >
         <input type="file" multiple onChange={handleFileChange} className="hidden" id="fileUpload" disabled={scopeLoading} />
         <label htmlFor="fileUpload" className={`flex flex-col items-center gap-2 ${scopeLoading ? "cursor-not-allowed" : "cursor-pointer"}`}>
@@ -812,7 +742,7 @@ export default function ProjectForm({ onSubmit }) {
                 onClick={() => handleRemoveFile(index)}
                 className="flex items-center gap-1 text-red-500 hover:text-red-700 text-sm"
               >
-                <Trash2 className="w-4 h-4" /> 
+                <Trash2 className="w-4 h-4" />
               </button>
             </li>
           ))}
@@ -878,11 +808,10 @@ export default function ProjectForm({ onSubmit }) {
                 {downloadingQuestions ? "Downloading..." : "Download Questions (Excel)"}
               </button>
 
-              <label className={`flex items-center gap-2 text-white px-4 py-2 rounded-lg shadow font-semibold transition ${
-                scopeLoading
-                  ? "bg-blue-400 cursor-not-allowed opacity-50"
-                  : "bg-blue-600 hover:bg-blue-700 cursor-pointer"
-              }`}>
+              <label className={`flex items-center gap-2 text-white px-4 py-2 rounded-lg shadow font-semibold transition ${scopeLoading
+                ? "bg-blue-400 cursor-not-allowed opacity-50"
+                : "bg-blue-600 hover:bg-blue-700 cursor-pointer"
+                }`}>
                 <Upload className="w-4 h-4" />
                 {scopeLoading ? "Upload Disabled" : "Upload Client Responses"}
                 <input
@@ -969,9 +898,8 @@ export default function ProjectForm({ onSubmit }) {
             <button
               type="submit"
               disabled={scopeLoading || !answersSaved}
-              className={`flex items-center justify-center gap-2 ${
-                answersSaved ? "bg-primary hover:bg-secondary" : "bg-gray-400 cursor-not-allowed"
-              } text-white px-4 py-2 rounded-lg shadow font-semibold transition disabled:opacity-50`}
+              className={`flex items-center justify-center gap-2 ${answersSaved ? "bg-primary hover:bg-secondary" : "bg-gray-400 cursor-not-allowed"
+                } text-white px-4 py-2 rounded-lg shadow font-semibold transition disabled:opacity-50`}
             >
               {scopeLoading ? (
                 <>

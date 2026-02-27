@@ -3,91 +3,7 @@ import { useParams } from 'react-router-dom';
 import projectApi from '../api/projectApi';
 import GanttChart from './GanttChart';
 
-/**
- * Component to render architecture diagram with fallback support
- */
-const ArchitectureDiagramViewer = ({ imageUrl }) => {
-  const [currentUrl, setCurrentUrl] = useState(imageUrl);
-  const [hasError, setHasError] = useState(false);
-  const [zoom, setZoom] = useState(1);
-
-  const handleError = () => {
-    if (currentUrl.includes('.png')) {
-      console.log('⚠️ PNG failed, trying SVG fallback...');
-      setCurrentUrl(currentUrl.replace('.png', '.svg'));
-    } else {
-      console.error('❌ Image failed to load:', currentUrl);
-      setHasError(true);
-    }
-  };
-
-  const handleZoomIn = () => setZoom((z) => Math.min(z + 0.25, 3));
-  const handleZoomOut = () => setZoom((z) => Math.max(z - 0.25, 0.5));
-  const handleResetZoom = () => setZoom(1);
-
-  if (hasError) {
-    return (
-      <div className="flex items-center justify-center min-h-[400px] w-full bg-gray-50 dark:bg-gray-800/50 rounded-lg border border-gray-200 dark:border-gray-700 p-8 text-center text-gray-500 dark:text-gray-400">
-        <div className="flex flex-col items-center gap-2">
-          <svg xmlns="http://www.w3.org/2000/svg" className="w-12 h-12 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-          </svg>
-          <p>Image not available</p>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="relative group w-full bg-gray-50 dark:bg-gray-800/50 rounded-lg border border-gray-200 dark:border-gray-700 h-[80vh] min-h-[500px] flex flex-col overflow-hidden">
-      {/* Controls Toolbar */}
-      <div className="absolute top-4 right-4 z-10 flex gap-2 transition-opacity opacity-70 hover:opacity-100">
-        <div className="flex bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm rounded-md shadow-sm border border-gray-200 dark:border-gray-600">
-          <button onClick={handleZoomOut} className="px-3 py-1.5 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-l text-gray-700 dark:text-gray-200" title="Zoom Out"> - </button>
-          <span className="px-2 py-1.5 text-sm font-medium border-x border-gray-200 dark:border-gray-600 text-gray-700 dark:text-gray-200">{Math.round(zoom * 100)}%</span>
-          <button onClick={handleZoomIn} className="px-3 py-1.5 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-r text-gray-700 dark:text-gray-200" title="Zoom In"> + </button>
-        </div>
-
-        <button
-          onClick={handleResetZoom}
-          className="bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm rounded-md shadow-sm px-3 py-1.5 text-sm font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 border border-gray-200 dark:border-gray-600"
-        >
-          Reset
-        </button>
-
-        <a
-          href={currentUrl}
-          target="_blank"
-          rel="noreferrer"
-          className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm rounded-md shadow-sm text-gray-700 dark:text-gray-200 hover:text-blue-600 dark:hover:text-blue-400 border border-gray-200 dark:border-gray-600 transition-colors"
-          title="Download original"
-          download
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-          </svg>
-        </a>
-      </div>
-
-      <div className="flex-1 w-full overflow-auto p-8 cursor-grab active:cursor-grabbing">
-        <div className="min-w-min min-h-min flex justify-center items-center h-full">
-          <img
-            src={currentUrl}
-            alt="Architecture Diagram"
-            style={{
-              transform: `scale(${zoom})`,
-              transformOrigin: 'center center',
-              transition: 'transform 0.2s ease-out'
-            }}
-            className="max-w-none shadow-lg bg-white dark:bg-gray-800 rounded-md"
-            onError={handleError}
-            draggable={false}
-          />
-        </div>
-      </div>
-    </div>
-  );
-};
+import ReactFlowDiagram from './ReactFlowDiagram';
 
 
 /**
@@ -98,6 +14,11 @@ const ScopePreviewTabs = ({ activeTab, parsedDraft }) => {
   const [caseStudy, setCaseStudy] = useState(null);
   const [caseStudyLoading, setCaseStudyLoading] = useState(false);
   const [caseStudyError, setCaseStudyError] = useState(null);
+
+  // Extract inferred fields list from scope JSON (set by backend during generation)
+  const inferredFields = Array.isArray(parsedDraft?.inferred_fields)
+    ? parsedDraft.inferred_fields
+    : [];
 
   // Fetch related case study when tab is active
   useEffect(() => {
@@ -298,19 +219,35 @@ const ScopePreviewTabs = ({ activeTab, parsedDraft }) => {
     if (activeTab === 'overview' && typeof data === 'object' && !Array.isArray(data)) {
       return (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 auto-rows-auto">
-          {Object.entries(data).map(([key, value], idx) => (
-            <div
-              key={idx}
-              className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4 hover:shadow-md transition-shadow duration-200 flex flex-col"
-            >
-              <div className="text-sm font-bold text-gray-700 dark:text-gray-300 mb-2 uppercase tracking-wide">
-                {key.replace(/_/g, ' ')}
+          {Object.entries(data).map(([key, value], idx) => {
+            const isInferred = inferredFields.includes(key);
+            return (
+              <div
+                key={idx}
+                className={`rounded-lg p-4 hover:shadow-md transition-shadow duration-200 flex flex-col border ${isInferred
+                  ? 'border-yellow-400 bg-yellow-50 dark:bg-yellow-900/20'
+                  : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700'
+                  }`}
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <div className="text-sm font-bold text-gray-700 dark:text-gray-300 uppercase tracking-wide">
+                    {key.replace(/_/g, ' ')}
+                  </div>
+                  {isInferred && (
+                    <span
+                      title="AI Inferred — Please Verify"
+                      className="cursor-help text-xs font-semibold text-yellow-700 dark:text-yellow-400 bg-yellow-100 dark:bg-yellow-900/40 border border-yellow-300 dark:border-yellow-600 rounded-full px-2 py-0.5 flex items-center gap-1 ml-2 shrink-0"
+                    >
+                      ⚠️ AI Inferred
+                    </span>
+                  )}
+                </div>
+                <div className="text-base text-gray-900 dark:text-gray-100 break-words flex-grow">
+                  {typeof value === 'object' ? JSON.stringify(value) : String(value || '-')}
+                </div>
               </div>
-              <div className="text-base text-gray-900 dark:text-gray-100 break-words flex-grow">
-                {typeof value === 'object' ? JSON.stringify(value) : String(value || '-')}
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       );
     }
@@ -369,25 +306,21 @@ const ScopePreviewTabs = ({ activeTab, parsedDraft }) => {
       );
     }
 
-    // If this is an image section and data is a string (file path), render as image
+    // If this is the architecture section and data is an object (React Flow JSON)
+    if (isImageSection && typeof data === 'object' && data.nodes && data.edges) {
+      return <ReactFlowDiagram data={data} />;
+    }
+
+    // Fallback for legacy string paths
     if (isImageSection && typeof data === 'string') {
-      // Check if it's a valid image path
       if (data.match(/\.(png|jpg|jpeg|gif|svg|webp)$/i)) {
-        // Construct proper API URL for blob storage
-        // Image path format: "projects/PROJECT_ID/filename.png"
-        // const apiBaseUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
-        // const imageUrl = data.startsWith('http')
-        //   ? data
-        //   : `${apiBaseUrl}/api/blobs/download/${data}?base=projects`;
         const imageUrl = `/api/blobs/download/${data}?base=projects`;
-
-        console.log('🖼️ Architecture image path:', data);
-        console.log('🖼️ Constructed image URL:', imageUrl);
-        // console.log('🖼️ API Base URL:', apiBaseUrl);
-
-        return <ArchitectureDiagramViewer imageUrl={imageUrl} />;
+        return (
+          <div className="flex justify-center p-4">
+            <img src={imageUrl} alt="Legacy Architecture Diagram" className="max-w-full rounded-lg shadow-md" />
+          </div>
+        );
       }
-      // If it's a string but not an image path, just show it as text
       return <div className="text-gray-600 dark:text-gray-400">{data}</div>;
     }
 
@@ -502,6 +435,107 @@ const ScopePreviewTabs = ({ activeTab, parsedDraft }) => {
   const sectionData = getSectionData();
   const isTableSection = activeTab === 'activities' || activeTab === 'resourcing';
   const isImageSection = activeTab === 'architecture';
+
+  // Handle Tech Stack tab
+  if (activeTab === 'tech_stack') {
+    const techStack = parsedDraft?.recommended_tech_stack || [];
+    const categoryIcons = {
+      Frontend: { icon: "🖥️", color: "#7c3aed" },
+      Backend: { icon: "⚙️", color: "#06b6d4" },
+      Database: { icon: "🗄️", color: "#10b981" },
+      Infrastructure: { icon: "☁️", color: "#f59e0b" },
+      DevOps: { icon: "🚀", color: "#8b5cf6" },
+      "AI/ML": { icon: "🤖", color: "#ec4899" },
+      Mobile: { icon: "📱", color: "#f97316" },
+    };
+    return (
+      <div className="p-6 space-y-4" style={{ background: "#0a0d1a" }}>
+        <div className="mb-4">
+          <h2 className="text-lg font-bold text-white">Recommended Tech Stack</h2>
+          <p className="text-sm text-slate-500">AI-selected technologies based on the project domain and RFP requirements.</p>
+        </div>
+        {techStack.length === 0 ? (
+          <div className="text-center py-16 text-slate-500">
+            <p className="text-4xl mb-3">🛠️</p>
+            <p className="font-medium">No tech stack data yet.</p>
+            <p className="text-xs mt-1">Regenerate the scope to get AI-recommended technologies.</p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+            {techStack.map((cat, idx) => {
+              const meta = categoryIcons[cat.category] || { icon: "🔧", color: "#64748b" };
+              return (
+                <div
+                  key={idx}
+                  className="rounded-2xl p-5"
+                  style={{
+                    background: "#131929",
+                    border: "1px solid rgba(255,255,255,0.07)",
+                    boxShadow: "0 4px 24px rgba(0,0,0,0.3)"
+                  }}
+                >
+                  <div className="flex items-center gap-2 mb-3">
+                    <span className="text-xl">{meta.icon}</span>
+                    <h3 className="font-bold text-sm text-white">{cat.category}</h3>
+                  </div>
+                  <div className="flex flex-wrap gap-2.5 mt-1">
+                    {(cat.technologies || []).map((techStr, ti) => {
+                      // Parse "Tech Name (Classification)" or "Tech Name - Classification"
+                      let name = techStr;
+                      let classification = null;
+
+                      const parensMatch = techStr.match(/^(.*?)\s*\((.*?)\)$/);
+                      if (parensMatch && (parensMatch[2].toLowerCase().includes('explicit') || parensMatch[2].toLowerCase().includes('implicit'))) {
+                        name = parensMatch[1].trim();
+                        classification = parensMatch[2].trim();
+                      } else {
+                        const dashMatch = techStr.match(/^(.*?)\s+-\s+(Explicit.*?|Implicit.*?)$/i);
+                        if (dashMatch) {
+                          name = dashMatch[1].trim();
+                          classification = dashMatch[2].trim();
+                        }
+                      }
+
+                      let classBadge = null;
+                      if (classification) {
+                        const isExplicit = classification.toLowerCase().includes('explicit');
+                        const isImplicit = classification.toLowerCase().includes('implicit');
+
+                        if (isExplicit) {
+                          classBadge = <span className="ml-2 flex-shrink-0 text-[9px] uppercase tracking-wider font-bold bg-emerald-500/20 text-emerald-300 px-1.5 py-0.5 rounded-sm border border-emerald-500/30 shadow-sm" title={classification}>Explicit</span>;
+                        } else if (isImplicit) {
+                          classBadge = <span className="ml-2 flex-shrink-0 text-[9px] uppercase tracking-wider font-bold bg-indigo-500/20 text-indigo-300 px-1.5 py-0.5 rounded-sm border border-indigo-500/30 shadow-sm" title={classification}>Implicit</span>;
+                        } else {
+                          classBadge = <span className="ml-2 flex-shrink-0 text-[9px] uppercase tracking-wider font-bold bg-white/10 text-white/70 px-1.5 py-0.5 rounded-sm border border-white/20 shadow-sm" title={classification}>{classification}</span>;
+                        }
+                      }
+
+                      return (
+                        <div
+                          key={ti}
+                          className="text-sm font-medium pl-3 pr-2 py-1.5 rounded-lg flex items-center shadow-lg"
+                          style={{
+                            background: `${meta.color}15`,
+                            color: meta.color,
+                            border: `1px solid ${meta.color}40`,
+                            backdropFilter: 'blur(4px)'
+                          }}
+                          title={techStr}
+                        >
+                          <span className="truncate">{name}</span>
+                          {classBadge}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+  }
 
   // Handle Related Case Study tab separately
   if (activeTab === 'related_case_study') {

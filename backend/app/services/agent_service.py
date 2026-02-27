@@ -78,130 +78,121 @@ class ProjectScopingAgent:
         complexity: Optional[str] = None,
         use_cases: Optional[str] = None,
         duration: Optional[str] = None,
-        closeout_actuals_context: Optional[str] = None
+        closeout_actuals_context: Optional[str] = None,
+        past_proposals_context: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        Generate a comprehensive project scope using agent reasoning.
-
-        Args:
-            project_name: Name of the project
-            domain: Project domain (e.g., "CRM", "E-commerce")
-            tech_stack: Technology stack
-            rfp_text: Full RFP document text
-            company_id: Company/client ID for rate cards
-            db_session: Database session for queries
-            complexity: Optional complexity level
-            use_cases: Optional use cases description
-            duration: Optional target duration (e.g. "5 months")
-            closeout_actuals_context: Optional actual resource performance data from project closeout
-
-        Returns:
-            Dictionary containing complete project scope
+        Generate a comprehensive project scope using Two-Phase agent reasoning.
         """
-        logger.info(f"🚀 Agent generating scope for: {project_name}")
+        logger.info(f"🚀 Agent generating scope for: {project_name} using Two-Phase Deterministic method")
         
         try:
-            # Get rate cards first (agent will need this info)
+            # 1. Get rate cards
             rate_cards = await get_rate_cards_async(company_id, db_session)
             rate_cards_str = json.dumps(rate_cards, indent=2)
             
-            # Build user prompt with all context
-            user_prompt = self._build_user_prompt(
-                project_name=project_name,
-                domain=domain,
-                tech_stack=tech_stack,
-                rfp_text=rfp_text,
-                complexity=complexity,
-                use_cases=use_cases,
-                duration=duration,
-                rate_cards=rate_cards_str,
-                closeout_actuals_context=closeout_actuals_context
-            )
-            
-            # Bind tools to LLM
-            llm_with_tools = self.llm.bind_tools(self.tools)
-            
-            logger.info("🤖 Agent starting autonomous reasoning (with tools)...")
-            
-            messages = [
-                SystemMessage(content=PROJECT_SCOPING_SYSTEM_PROMPT),
-                HumanMessage(content=user_prompt)
-            ]
-            
-            # Use LangGraph or simple loop for tool calling
-            # Implementing a simple loop here
-            from langchain_core.messages import ToolMessage
-            
-            # Initial call
-            ai_msg = await llm_with_tools.ainvoke(messages)
-            messages.append(ai_msg)
-            
-            # Tool execution loop (limit to 5 turns to prevent infinite loops)
-            for _ in range(5):
-                if not ai_msg.tool_calls:
-                    break
-                    
-                logger.info(f"🛠️ Agent requested {len(ai_msg.tool_calls)} tool calls")
-                
-                for tool_call in ai_msg.tool_calls:
-                    tool_name = tool_call["name"]
-                    tool_args = tool_call["args"]
-                    tool_id = tool_call["id"]
-                    
-                    logger.info(f"  👉 Calling tool: {tool_name}")
-                    
-                    # Find tool by name
-                    selected_tool = next((t for t in self.tools if t.name == tool_name), None)
-                    
-                    if selected_tool:
-                        try:
-                            # Execute tool
-                            # Note: some tools might be async, others sync. LangChain tools usually implement invoke/ainvoke
-                            if hasattr(selected_tool, 'ainvoke'):
-                                tool_result = await selected_tool.ainvoke(tool_args)
-                            else:
-                                tool_result = selected_tool.invoke(tool_args)
-                                
-                            logger.info(f"  ✅ Tool {tool_name} returned result (len: {len(str(tool_result))})")
-                        except Exception as e:
-                            tool_result = f"Error executing tool {tool_name}: {e}"
-                            logger.error(f"  ❌ Tool execution failed: {e}")
-                    else:
-                        tool_result = f"Error: Tool {tool_name} not found"
-                        
-                    # Append tool result to messages
-                    messages.append(ToolMessage(content=str(tool_result), tool_call_id=tool_id))
-                
-                # Call LLM again with tool results
-                ai_msg = await llm_with_tools.ainvoke(messages)
-                messages.append(ai_msg)
-            
-            response = ai_msg
-            
-            logger.info("✅ Agent completed reasoning")
-            logger.info(f"🔍 Raw Agent Response (first 500 chars): {response.content[:500]}")
-            
-            # Parse JSON from response
-            try:
-                scope_data = self._extract_json_from_response(response.content)
-                logger.info("✅ JSON extracted successfully from agent response")
-            except Exception as e:
-                logger.error(f"❌ JSON Extraction Failed: {e}")
-                logger.error(f"   Full Agent Response: {response.content}")
-                raise
-
-            # Add metadata
-            scope_data['_agent_metadata'] = {
-                "generated_at": datetime.utcnow().isoformat(),
-                "agent_version": "1.0.0",
-                "reasoning_steps": 1,  # Direct LLM call
-                "tools_used": ["get_rate_cards"]  # We called this tool
+            # --- DETERMINISTIC PRE-EXTRACTION START ---
+            rfp_text_normalized = re.sub(r'[^a-z0-9\s]', '', rfp_text.lower())
+            tech_aliases = {
+                "Azure SQL Database": ["sql db", "azure sql db", "sql database", "azure sql"],
+                "Azure Data Lake Storage Gen2": ["adls", "adls gen2", "azure data lake"],
+                "Databricks": ["azure databricks"],
+                "Power BI": ["powerbi", "power-bi"],
+                "Microsoft Azure": ["azure"],
+                "React": ["reactjs", "react.js"],
+                "Node.js": ["nodejs", "node"],
+                "PostgreSQL": ["postgres"],
             }
             
-            # Validate scope structure
-            scope_data = self._validate_and_enrich_scope(scope_data, project_name, domain, duration)
+            extracted_explicit_stack = []
             
-            logger.info(f"✅ Scope generated successfully")
+            for key, aliases in tech_aliases.items():
+                key_normalized = re.sub(r'[^a-z0-9\s]', '', key.lower())
+                # Check if the key or ANY of its aliases are in the RFP
+                if key_normalized in rfp_text_normalized or any(re.sub(r'[^a-z0-9\s]', '', a.lower()) in rfp_text_normalized for a in aliases):
+                    extracted_explicit_stack.append(key)
+            
+            explicit_stack_str = ", ".join(extracted_explicit_stack) if extracted_explicit_stack else "None strictly identified."
+            logger.info(f"🔍 Pre-Extracted Explicit Stack: {explicit_stack_str}")
+            # --- DETERMINISTIC PRE-EXTRACTION END ---
+            
+            # 2. Phase 1: High-Level Plan
+            plan_prompt = self._build_plan_prompt(
+                project_name=project_name, domain=domain, tech_stack=tech_stack,
+                rfp_text=rfp_text, explicit_stack_str=explicit_stack_str,
+                complexity=complexity, use_cases=use_cases, 
+                duration=duration, past_proposals_context=past_proposals_context
+            )
+            
+            logger.info("🤖 Agent starting Phase 1: Planning (Structured Output)...")
+            from app.schemas import PlanOutput, ScheduleOutput
+            
+            plan_llm = self.llm.with_structured_output(PlanOutput)
+            plan_result = await plan_llm.ainvoke([
+                SystemMessage(content=PROJECT_SCOPING_SYSTEM_PROMPT),
+                HumanMessage(content=plan_prompt)
+            ])
+            
+            logger.info(f"✅ Phase 1 Complete. Found {len(plan_result.phases)} phases, {len(plan_result.team_roles)} roles.")
+            
+            # 3. Phase 2: Granular Schedule (No Dates, Just Dependencies)
+            schedule_prompt = self._build_schedule_prompt(
+                plan=plan_result, rfp_text=rfp_text, rate_cards=rate_cards_str,
+                duration=duration, closeout_actuals_context=closeout_actuals_context,
+                past_proposals_context=past_proposals_context
+            )
+            
+            logger.info("🤖 Agent starting Phase 2: Scheduling (Structured Output)...")
+            schedule_llm = self.llm.with_structured_output(ScheduleOutput)
+            schedule_result = await schedule_llm.ainvoke([
+                SystemMessage(content=PROJECT_SCOPING_SYSTEM_PROMPT),
+                HumanMessage(content=schedule_prompt)
+            ])
+            
+            logger.info(f"✅ Phase 2 Complete. Generated {len(schedule_result.activities)} granular activities.")
+            
+            # 4. Construct final raw data package (to be passed to CPM Math in engine)
+            # Serialize tech stack categories safely from the new Pydantic schema
+            tech_stack_list = []
+            
+            for cat in getattr(plan_result, 'recommended_tech_stack', []):
+                cat_dict = cat.dict() if hasattr(cat, 'dict') else dict(cat)
+                
+                processed_technologies = []
+                for tech_item in cat_dict.get('technologies', []):
+                    # tech_item is now a dict with name, classification, justification
+                    tech_dict = tech_item if isinstance(tech_item, dict) else tech_item.dict()
+                    name = tech_dict.get('name', 'Unknown')
+                    classification = tech_dict.get('classification', 'Implicit')
+                    
+                    if classification.lower() == 'explicit':
+                        processed_technologies.append(f"{name} (Explicit from RFP)")
+                    else:
+                        processed_technologies.append(f"{name} (Implicit required foundation)")
+                        
+                cat_dict['technologies'] = processed_technologies
+                tech_stack_list.append(cat_dict)
+
+            scope_data = {
+                "project_overview": {
+                    "name": project_name,
+                    "domain": domain,
+                    "objective": plan_result.executive_summary,
+                    "key_deliverables": plan_result.key_deliverables,
+                    "complexity": getattr(plan_result, 'complexity', 'Medium'),
+                    "complexity_reasoning": getattr(plan_result, 'complexity_reasoning', ''),
+                },
+                "phases": [{"name": p} for p in plan_result.phases],
+                "team_composition": [{"role": r} for r in plan_result.team_roles],
+                "activities": [act.dict() for act in schedule_result.activities],
+                "recommended_tech_stack": tech_stack_list,
+                "_agent_metadata": {
+                    "generated_at": datetime.utcnow().isoformat(),
+                    "agent_version": "2.0-deterministic",
+                    "reasoning_steps": 2,
+                    "tools_used": ["structured_outputs"]
+                }
+            }
             
             return scope_data
             
@@ -209,7 +200,7 @@ class ProjectScopingAgent:
             logger.error(f"❌ Agent scope generation failed: {e}", exc_info=True)
             raise
     
-    def _build_user_prompt(
+    def _build_plan_prompt(
         self,
         project_name: str,
         domain: str,
@@ -218,17 +209,16 @@ class ProjectScopingAgent:
         complexity: Optional[str],
         use_cases: Optional[str],
         duration: Optional[str],
-        rate_cards: str,
-        closeout_actuals_context: Optional[str] = None
+        explicit_stack_str: str = "None strictly identified.",
+        past_proposals_context: Optional[str] = None
     ) -> str:
-        """Build the user prompt for the agent."""
+        """Phase 1: Build prompt to extract high-level plan and team roles."""
         
-        prompt = f"""Create a comprehensive project scope for the following project:
+        prompt = f"""Create a high-level project plan for the following project:
 
 **Project Information:**
 - **Name**: {project_name}
 - **Domain**: {domain}
-- **Tech Stack**: {tech_stack}
 """
         
         if complexity:
@@ -239,110 +229,115 @@ class ProjectScopingAgent:
 
         if duration:
             prompt += f"- **Target Duration**: {duration}\n"
-            prompt += "  * **IMPORTANT**: If your research (ACTUAL_DATA) suggests this duration is unrealistic, you MUST propose a corrected duration in the 'ai_recommended_duration' field (e.g. '6 months'). Do not be constrained by the target if data proves otherwise.\n"
         
-        from datetime import datetime
-        current_date = datetime.now().strftime("%Y-%m-%d")
-        
-        if closeout_actuals_context:
-            prompt += f"""
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-**🔴 MANDATORY OVERRIDE - ACTUAL DATA FROM PROJECT CLOSEOUT:**
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-This project was PREVIOUSLY COMPLETED. The data below is from REAL execution.
-You MUST use these values. Do NOT use generic estimates. Do NOT ignore this section.
-
-{closeout_actuals_context}
-
-**RULES:**
-1. For each resource listed above, the `total_months` in team_composition MUST equal the ACTUAL effort value
-2. Activity effort_months should be proportionally adjusted to match actual resource utilization
-3. Timeline total_months should reflect the actual project duration (use the max actual effort)
-4. Cost calculations should use: ACTUAL effort × rate_per_month
-5. If actual effort was HIGHER than estimated, your scope MUST reflect the higher value
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-"""
-
         prompt += f"""
-**Available Rate Cards** (use these exact rates for cost calculations):
-```json
-{rate_cards}
-```
-
 **RFP Document:**
 {rfp_text[:8000]}
 
 **Your Task:**
+Based on the RFP and domain, do the following:
+1. Extract the optimal high-level phases (e.g., Discovery, Design, Build, QA) and required team roles.
 
-Please analyze this RFP thoroughly and create a detailed project scope. Follow the process outlined in your system instructions:
+---
+**CRITICAL TECHNICAL CONSTRAINTS:**
+The client EXPLICITLY requires the following technologies (detected directly from the RFP):
 
-1. Research best practices and find similar case studies
-2. Plan an appropriate team composition
-3. Calculate accurate costs using the provided rate cards
-4. Define clear phases, activities, and timeline
-5. Identify risks and assumptions
-6. Verify your work for completeness and accuracy
+[{explicit_stack_str}]
 
-214: **IMPORTANT**: 
-215: - When generating the timeline, use TODAY'S DATE ({current_date}) or a future date as the start_date. NEVER use past dates.
-216: - You MUST respect the **Target Duration** if provided. If the user asks for {duration or 'X months'}, the total timeline MUST match strictly.
-217: 
-218: Remember to use your tools to gather information and validate your decisions!
+You MUST build the architecture around these specific tools.
+You are NOT allowed to replace or remove them.
+All implicit recommendations MUST remain compatible with this ecosystem.
+Do NOT introduce unrelated stacks (e.g., MERN, LAMP, Kubernetes, generic SaaS stacks) unless explicitly required by the RFP.
+---
 
-Return your response as a properly formatted JSON object following the schema in your system instructions.
+2. **Recommend a comprehensive tech stack** organized by category. 
+   - Choose technologies that are best-suited for the domain ({domain}) and the requirements in the RFP.
+   - Be specific with versions where relevant (e.g., 'React 18', 'Python 3.11', 'PostgreSQL 15').
+   - Do NOT use generic names — recommend actual, production-grade technologies.
+   - For every technology, include a 1-2 sentence `justification`. If the classification is 'Implicit', you MUST explain exactly why it is required as a foundational piece of the explicit ecosystem.
 """
-        
-        logger.info(f"📝 Generated User Prompt:\n{prompt[:500]}...\n(truncated)")
+        if past_proposals_context:
+            prompt += f"""
+**Calibration References (Past Proposals from our company):**
+Here are similar proposals we have done before. Use these as calibration references for determining team size, duration, and project complexity.
+{past_proposals_context}
+"""
         return prompt
-    
-    def _extract_json_from_response(self, response_text: str) -> Dict[str, Any]:
-        """
-        Extract and parse JSON from agent's response.
+
+    def _build_schedule_prompt(
+        self,
+        plan: Any,
+        rfp_text: str,
+        rate_cards: str,
+        duration: Optional[str],
+        closeout_actuals_context: Optional[str] = None,
+        past_proposals_context: Optional[str] = None
+    ) -> str:
+        """Phase 2: Build prompt to generate detailed activities with dependencies."""
         
-        The agent might return JSON in various formats:
-        - Plain JSON
-        - JSON in markdown code blocks
-        - JSON with explanatory text
-        """
-        try:
-            # Try direct JSON parse first
-            return json.loads(response_text)
-        except json.JSONDecodeError:
-            pass
-        
-        # Try to extract from markdown code blocks
-        json_match = re.search(r'```json\s*\n(.*?)\n```', response_text, re.DOTALL)
-        if json_match:
-            try:
-                return json.loads(json_match.group(1))
-            except json.JSONDecodeError:
-                pass
-        
-        # Try to extract from any code block
-        code_match = re.search(r'```\s*\n(.*?)\n```', response_text, re.DOTALL)
-        if code_match:
-            try:
-                return json.loads(code_match.group(1))
-            except json.JSONDecodeError:
-                pass
-        
-        # Try to find JSON object in text
-        json_obj_match = re.search(r'\{.*\}', response_text, re.DOTALL)
-        if json_obj_match:
-            try:
-                logger.info("Found JSON object in text, attempting parse...")
-                return json.loads(json_obj_match.group(0))
-            except json.JSONDecodeError:
-                logger.warning("Failed to parse JSON object found in text")
-                pass
-        
-        # If all else fails, raise error
-        logger.error(f"Failed to extract JSON from response. Length: {len(response_text)}")
-        logger.error(f"Response Preview: {response_text[:500]}...")
-        raise ValueError("Agent did not return valid JSON. Response: " + response_text[:500])
+        prompt = f"""You are generating the granular schedule for a project.
+You must break the project down into specific activities.
+
+**Approved High-Level Plan:**
+- Phases: {', '.join(plan.phases)}
+- Approved Team Roles: {', '.join(plan.team_roles)}
+
+**CRITICAL RULES FOR ACTIVITIES:**
+1. Every activity MUST belong to one of the Phases listed above.
+2. Every activity MUST be owned by one of the Team Roles listed above.
+3. Every activity MUST have an `effort_months` estimate (e.g., 0.5 for two weeks, 1.0 for a month).
+4. You MUST define `dependencies` for tasks that cannot start until another task finishes. Use the exact `name` of the dependent activity. By default, tasks without dependencies start on Day 1 in parallel.
+5. YOU ARE STRICTLY FORBIDDEN FROM GENERATING START OR END DATES. The math will be calculated deterministically later based on your dependencies.
+
+**EFFORT CALIBRATION RULES (follow these strictly for consistent estimates):**
+Use these industry-standard effort distribution guidelines when assigning `effort_months`:
+- Discovery & Requirements phase: **5–10%** of total estimated project effort
+- Architecture & System Design: **10–15%** of total project effort
+- Core Development (backend + frontend combined): **40–50%** of total project effort
+- Integration & API work: **10–15%** of total project effort
+- Testing & QA: **15–20%** of total project effort
+- Deployment, DevOps & Handover: **5–10%** of total project effort
+
+For individual activity `effort_months`, use these FIXED reference values based on task type:
+- A small focused task (e.g. design one screen, write one API endpoint): **0.25 months**
+- A medium feature (e.g. build auth module, design DB schema): **0.5 months**
+- A large feature (e.g. full payment integration, reporting module): **1.0 month**
+- A complex subsystem (e.g. full data pipeline, multi-step workflow engine): **1.5–2.0 months**
+
+DO NOT deviate from these anchor values without a clear reason stated in comments.
+"""
+
+        if closeout_actuals_context:
+            prompt += f"""
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+**🔴 MANDATORY OVERRIDE - ACTUAL DATA FROM PROJECT CLOSEOUT:**
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+This project was PREVIOUSLY COMPLETED. The data below is from REAL execution.
+You MUST use these specific actual roles and adapt your activity effort estimates to match the total real effort logged.
+
+{closeout_actuals_context}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+"""
+
+        prompt += f"""
+**Available Rate Cards** (For reference when naming roles):
+```json
+{rate_cards}
+```
+
+**Original RFP Document Fragment:**
+{rfp_text[:3000]}
+
+Return the strictly formatted nested list of activities.
+"""
+        if past_proposals_context:
+            prompt += f"""
+**Calibration References (Past Proposals from our company):**
+Here are similar proposals we have done before. Use these past actuals as a baseline to prevent underestimating effort and roles.
+{past_proposals_context}
+"""
+            
+        return prompt
     
     def _extract_tools_used(self, messages: list) -> list:
         """Extract list of tools the agent used during reasoning."""
@@ -379,6 +374,10 @@ Return your response as a properly formatted JSON object following the schema in
                 "key_deliverables": []
             }
         
+        # Ensure complexity is present in project_overview, defaulting if not set
+        if 'complexity' not in scope_data['project_overview']:
+            scope_data['project_overview']['complexity'] = 'Medium' # Default value if not already set
+
         if 'timeline' not in scope_data:
             # Parse duration string if available (e.g. "5 months" -> 5)
             default_months = 6

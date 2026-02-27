@@ -10,7 +10,7 @@ from app.auth.router import fastapi_users
 from app import models
 from app.utils.presenton_client import presenton_client
 from app.utils import azure_blob
-from app.utils.scope_engine import _extract_text_from_files
+from app.engine.document_processor import extract_text_from_files
 from uuid import UUID
 import logging
 import json
@@ -114,7 +114,7 @@ async def generate_with_presenton(
         ]
         
         if input_files:
-            rfp_text = await _extract_text_from_files(input_files)
+            rfp_text = await extract_text_from_files(input_files)
             logger.info(f"📄 Extracted RFP content: {len(rfp_text)} characters")
         else:
             logger.warning("⚠️  No RFP files found for project")

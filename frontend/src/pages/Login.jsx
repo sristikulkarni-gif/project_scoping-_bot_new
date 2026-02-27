@@ -1,130 +1,133 @@
 import { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import authApi from "../api/authApi";
+import { Bot } from "lucide-react";
 
 export default function Login() {
   const [email, setEmail] = useState("karan.moreshwar@sigmoidanalytics.com");
   const [password, setPassword] = useState("1234");
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
   const navigate = useNavigate();
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setLoading(true);
+    setError(null);
     try {
-      // Login and get tokens
       const res = await authApi.login(email, password);
-
-      // Save token under both keys for compatibility
       localStorage.setItem("access_token", res.data.access_token);
-
-      if (res.data.refresh_token) {
-        localStorage.setItem("refresh_token", res.data.refresh_token);
-      }
+      if (res.data.refresh_token) localStorage.setItem("refresh_token", res.data.refresh_token);
       localStorage.setItem("isAuthenticated", "true");
-
-      // Fetch and save user profile
       try {
         const userRes = await authApi.getMe();
         localStorage.setItem("user", JSON.stringify(userRes.data));
-      } catch (userErr) {
-        console.error("Failed to fetch user profile:", userErr);
-      }
-
-      // Navigate to dashboard
+      } catch { }
       navigate("/dashboard");
     } catch (err) {
-      console.error("❌ Login error:", err);
-      alert("❌ Login failed. Check your credentials and try again.");
+      setError("Invalid credentials. Please try again.");
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="flex items-center justify-center min-h-screen relative overflow-hidden">
-      {/* Animated background */}
-      <div className="absolute inset-0 bg-gradient-to-br from-primary/10 via-accent/10 to-secondary/10 dark:from-dark-primary/20 dark:via-dark-accent/20 dark:to-dark-secondary/20"></div>
-      <div className="absolute inset-0 opacity-30">
-        <div className="absolute top-20 left-20 w-72 h-72 bg-primary/20 rounded-full blur-3xl animate-pulse"></div>
-        <div className="absolute bottom-20 right-20 w-96 h-96 bg-accent/20 rounded-full blur-3xl animate-pulse" style={{ animationDelay: '2s' }}></div>
+    <div
+      className="min-h-screen flex items-center justify-center relative overflow-hidden"
+      style={{ background: "#0a0d1a" }}
+    >
+      {/* Animated glow orbs */}
+      <div className="pointer-events-none absolute inset-0 overflow-hidden">
+        <div className="absolute -top-40 -left-40 w-[600px] h-[600px] rounded-full opacity-20 blur-3xl animate-pulse"
+          style={{ background: "radial-gradient(circle, #7c3aed, transparent 70%)" }} />
+        <div className="absolute -bottom-40 -right-40 w-[500px] h-[500px] rounded-full opacity-15 blur-3xl animate-pulse"
+          style={{ background: "radial-gradient(circle, #06b6d4, transparent 70%)", animationDelay: "2s" }} />
+        {/* Grid pattern */}
+        <div className="absolute inset-0 opacity-[0.03]"
+          style={{
+            backgroundImage: "linear-gradient(rgba(255,255,255,0.5) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.5) 1px, transparent 1px)",
+            backgroundSize: "40px 40px"
+          }} />
       </div>
 
+      {/* Login Card */}
       <form
         onSubmit={handleSubmit}
-        className="relative bg-white/90 dark:bg-dark-surface/90 backdrop-blur-xl p-10 rounded-3xl
-        shadow-2xl w-full max-w-md space-y-6 border border-gray-200/50 dark:border-dark-muted/50
-        animate-fade-in"
+        className="relative w-full max-w-md mx-4 p-8 rounded-2xl animate-fade-in"
+        style={{
+          background: "rgba(19,25,41,0.85)",
+          border: "1px solid rgba(139,92,246,0.2)",
+          backdropFilter: "blur(24px)",
+          boxShadow: "0 0 80px rgba(124,58,237,0.1), 0 32px 80px rgba(0,0,0,0.5)",
+        }}
       >
-        <div className="text-center space-y-2">
-          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl
-          bg-gradient-to-br from-primary to-accent shadow-lg mb-4">
-            <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-            </svg>
+        {/* Header */}
+        <div className="text-center mb-8">
+          <div className="w-16 h-16 rounded-2xl mx-auto mb-4 flex items-center justify-center"
+            style={{ background: "linear-gradient(135deg, #7c3aed, #06b6d4)", boxShadow: "0 8px 24px rgba(124,58,237,0.4)" }}>
+            <Bot className="w-8 h-8 text-white" />
           </div>
-          <h1 className="text-3xl font-extrabold gradient-text">
-            Welcome Back
-          </h1>
-          <p className="text-gray-600 dark:text-gray-400 text-sm">
-            Sign in to continue to your dashboard
-          </p>
+          <h1 className="text-2xl font-extrabold text-white mb-1">Welcome Back</h1>
+          <p className="text-sm text-slate-400">Sign in to Project Scoping Bot</p>
         </div>
 
-        <div className="space-y-4">
+        {/* Error */}
+        {error && (
+          <div className="mb-5 px-4 py-3 rounded-xl text-sm text-red-400"
+            style={{ background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.25)" }}>
+            {error}
+          </div>
+        )}
+
+        {/* Fields */}
+        <div className="space-y-4 mb-5">
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-              Email Address
-            </label>
+            <label className="block text-xs font-semibold text-slate-400 mb-1.5 uppercase tracking-wider">Email</label>
             <input
-              className="w-full border-2 border-gray-200 dark:border-dark-muted rounded-xl px-4 py-3
-              focus:outline-none focus:border-primary dark:focus:border-dark-primary
-              bg-gray-50 dark:bg-dark-surface text-gray-800 dark:text-white
-              transition-all duration-200 placeholder:text-gray-400"
               type="email"
               placeholder="you@example.com"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
+              className="w-full"
+              style={{ marginBottom: 0 }}
             />
           </div>
-
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-              Password
-            </label>
+            <label className="block text-xs font-semibold text-slate-400 mb-1.5 uppercase tracking-wider">Password</label>
             <input
-              className="w-full border-2 border-gray-200 dark:border-dark-muted rounded-xl px-4 py-3
-              focus:outline-none focus:border-primary dark:focus:border-dark-primary
-              bg-gray-50 dark:bg-dark-surface text-gray-800 dark:text-white
-              transition-all duration-200 placeholder:text-gray-400"
               type="password"
               placeholder="••••••••"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
+              className="w-full"
+              style={{ marginBottom: 0 }}
             />
           </div>
         </div>
 
+        {/* Submit */}
         <button
           type="submit"
           disabled={loading}
-          className="w-full bg-gradient-to-r from-primary to-accent hover:from-primary/90 hover:to-accent/90
-          text-white py-3.5 rounded-xl transition-all duration-200 font-semibold shadow-lg
-          shadow-primary/30 disabled:opacity-50 disabled:cursor-not-allowed
-          hover:shadow-xl hover:shadow-primary/40 hover:-translate-y-0.5
-          relative overflow-hidden group"
+          className="w-full py-3 px-4 rounded-xl font-semibold text-white text-sm transition-all disabled:opacity-50 mb-5"
+          style={{
+            background: "linear-gradient(135deg, #7c3aed, #06b6d4)",
+            boxShadow: "0 4px 24px rgba(124,58,237,0.4)",
+          }}
+          onMouseOver={e => e.currentTarget.style.opacity = "0.9"}
+          onMouseOut={e => e.currentTarget.style.opacity = "1"}
         >
-          <span className="relative z-10">{loading ? "Logging in..." : "Sign In"}</span>
-          <div className="absolute inset-0 bg-gradient-to-r from-accent to-primary opacity-0 group-hover:opacity-100 transition-opacity"></div>
+          {loading ? "Signing in..." : "Sign In →"}
         </button>
 
-        <div className="flex justify-between items-center text-sm">
-          <Link to="/register" className="text-primary dark:text-dark-primary hover:underline font-medium">
+        {/* Links */}
+        <div className="flex justify-between text-sm">
+          <Link to="/register" className="text-violet-400 hover:text-violet-300 font-medium transition-colors">
             Create Account
           </Link>
-          <Link to="/forgot-password" className="text-gray-600 dark:text-gray-400 hover:text-primary dark:hover:text-dark-primary hover:underline">
+          <Link to="/forgot-password" className="text-slate-500 hover:text-slate-300 transition-colors">
             Forgot Password?
           </Link>
         </div>

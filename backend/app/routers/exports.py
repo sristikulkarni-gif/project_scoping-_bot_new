@@ -95,8 +95,8 @@ async def _fetch_related_case_study(project_id: uuid.UUID, db: AsyncSession) -> 
             if getattr(project, "files", None):
                 project_files = [{"file_name": f.file_name, "file_path": f.file_path} for f in project.files]
                 if project_files:
-                    from app.utils.scope_engine import _extract_text_from_files
-                    rfp_text = await _extract_text_from_files(project_files)
+                    from app.engine.document_processor import extract_text_from_files
+                    rfp_text = await extract_text_from_files(project_files)
         except:
             pass
 

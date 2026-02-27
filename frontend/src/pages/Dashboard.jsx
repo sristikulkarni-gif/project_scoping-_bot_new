@@ -1,303 +1,375 @@
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import { useProjects } from "../contexts/ProjectContext";
 import { useAuth } from "../contexts/AuthContext";
-import {
-  Trash2,
-  PlusCircle,
-  Folder,
-  Eye,
-  History
-} from "lucide-react";
+import { Trash2, Eye, Folder, Zap, TrendingUp, BarChart2, Clock, CheckCircle2, Archive } from "lucide-react";
 import { Link } from "react-router-dom";
 import {
-  BarChart,
-  Bar,
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  Tooltip,
-  ResponsiveContainer,
+  BarChart, Bar, LineChart, Line,
+  XAxis, YAxis, Tooltip, ResponsiveContainer,
 } from "recharts";
+
+/** Colored pill for project status */
+function StatusBadge({ status }) {
+  const map = {
+    draft: { label: "Draft", bg: "rgba(139,92,246,0.15)", color: "#a78bfa", border: "rgba(139,92,246,0.3)" },
+    active: { label: "Active", bg: "rgba(16,185,129,0.15)", color: "#34d399", border: "rgba(16,185,129,0.3)" },
+    closed: { label: "Closed", bg: "rgba(100,116,139,0.15)", color: "#94a3b8", border: "rgba(100,116,139,0.3)" },
+  };
+  const s = map[status] || map.draft;
+  return (
+    <span className="text-xs font-semibold px-2 py-0.5 rounded-full"
+      style={{ background: s.bg, color: s.color, border: `1px solid ${s.border}` }}>
+      {s.label}
+    </span>
+  );
+}
+
+/** Relative time string */
+function relativeTime(dateStr) {
+  const diff = Date.now() - new Date(dateStr).getTime();
+  const mins = Math.floor(diff / 60000);
+  const hours = Math.floor(diff / 3600000);
+  const days = Math.floor(diff / 86400000);
+  if (mins < 1) return "Just now";
+  if (mins < 60) return `${mins}m ago`;
+  if (hours < 24) return `${hours}h ago`;
+  return `${days}d ago`;
+}
 
 export default function Dashboard() {
   const { projects, fetchProjects, deleteProject } = useProjects();
   const { user } = useAuth();
 
-  useEffect(() => {
-    fetchProjects();
-  }, [fetchProjects]);
-
+  useEffect(() => { fetchProjects(); }, [fetchProjects]);
 
   const handleDelete = async (id) => {
-    if (window.confirm("Are you sure you want to delete this project?")) {
+    if (window.confirm("Are you sure you want to delete this project?"))
       await deleteProject(id);
-    }
   };
 
-  // Today's date
-  const today = new Date().toLocaleDateString("en-US", {
-    weekday: "long",
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
+  const today = new Date().toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric", year: "numeric" });
 
-  // Complexity breakdown
   const complexityData = ["Simple", "Medium", "High"].map((c) => ({
     complexity: c,
     count: projects.filter((p) => p.complexity === c).length,
   }));
 
-  //  Daily projects created
   const dailyData = projects.reduce((acc, p) => {
-    const day = new Date(p.created_at).toLocaleDateString("en-US", {
-      day: "2-digit",
-      month: "short",
-      year: "numeric",
-    });
+    const day = new Date(p.created_at).toLocaleDateString("en-US", { day: "2-digit", month: "short" });
     const existing = acc.find((d) => d.day === day);
     if (existing) existing.count += 1;
     else acc.push({ day, count: 1 });
     return acc;
-  }, []);
+  }, []).sort((a, b) => new Date(a.day) - new Date(b.day)).slice(-10);
 
-  // Sort chronologically
-  dailyData.sort((a, b) => new Date(a.day) - new Date(b.day));
+  const weekProjects = projects.filter(p => {
+    const created = new Date(p.created_at);
+    const weekAgo = new Date(); weekAgo.setDate(weekAgo.getDate() - 7);
+    return created >= weekAgo;
+  });
+
+  const domains = [...new Set(projects.map(p => p.domain).filter(Boolean))];
+  const mostActiveDomain = domains.length
+    ? domains.sort((a, b) =>
+      projects.filter(p => p.domain === b).length - projects.filter(p => p.domain === a).length
+    )[0]
+    : "—";
+
+  const topComplexity = complexityData.sort((a, b) => b.count - a.count)[0]?.complexity || "—";
+
+  // Build activity feed from project events
+  const activityFeed = useMemo(() => {
+    const events = [];
+    [...projects]
+      .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+      .slice(0, 15)
+      .forEach(p => {
+        if (p.scope_finalized_at) {
+          events.push({
+            id: `fin-${p.id}`,
+            icon: <CheckCircle2 className="w-3.5 h-3.5" />,
+            color: "#10b981",
+            text: <>You generated a detailed scope for <span className="text-violet-400 font-semibold">{p.name || "Untitled"}</span></>,
+            time: p.scope_finalized_at,
+          });
+        }
+        if (p.status === "closed" && p.closed_at) {
+          events.push({
+            id: `cls-${p.id}`,
+            icon: <Archive className="w-3.5 h-3.5" />,
+            color: "#94a3b8",
+            text: <>Project <span className="text-slate-300 font-semibold">{p.name || "Untitled"}</span> was closed</>,
+            time: p.closed_at,
+          });
+        }
+        events.push({
+          id: `crt-${p.id}`,
+          icon: <Folder className="w-3.5 h-3.5" />,
+          color: "#7c3aed",
+          text: <>Project <span className="text-violet-400 font-semibold">{p.name || "Untitled"}</span> was created</>,
+          time: p.created_at,
+        });
+      });
+
+    return events
+      .sort((a, b) => new Date(b.time) - new Date(a.time))
+      .slice(0, 8);
+  }, [projects]);
+
+  const tooltipStyle = {
+    backgroundColor: "#131929",
+    border: "1px solid rgba(255,255,255,0.08)",
+    borderRadius: "10px",
+    color: "#e2e8f0",
+    fontSize: "13px",
+    boxShadow: "0 8px 32px rgba(0,0,0,0.4)",
+  };
 
   return (
-    <div className="space-y-8 animate-fade-in">
-      {/* Header */}
-      <div className="relative">
-        <div className="relative bg-white/95 dark:bg-dark-surface/95 backdrop-blur-2xl rounded-3xl p-8 shadow-soft border border-gray-100/80 dark:border-dark-muted/40 overflow-hidden">
-          {/* Background decoration */}
-          <div className="absolute top-0 right-0 w-80 h-80 bg-gradient-to-br from-primary/8 via-accent/4 to-transparent rounded-full blur-3xl"></div>
+    <div className="space-y-6 animate-fade-in">
 
-          <div className="relative z-10">
-            <h1 className="text-4xl font-extrabold bg-gradient-to-r from-primary via-accent to-secondary bg-clip-text text-transparent mb-2">
-              Welcome back{user ? `, ${user.username}` : ""}!
-            </h1>
-            <div className="flex items-center gap-2 text-gray-600 dark:text-gray-400 mb-1">
-              <span className="status-dot status-online"></span>
-              <p className="text-sm font-medium">{today}</p>
-            </div>
-            <p className="text-gray-600 dark:text-gray-400">
-              Here's a quick overview of your scoping activity.
-            </p>
+      {/* ── Welcome Header ── */}
+      <div className="rounded-2xl p-6 relative overflow-hidden"
+        style={{
+          background: "linear-gradient(135deg, rgba(124,58,237,0.18) 0%, rgba(6,182,212,0.08) 100%)",
+          border: "1px solid rgba(139,92,246,0.25)",
+        }}>
+        <div className="absolute -top-16 -right-16 w-64 h-64 rounded-full opacity-20 blur-3xl pointer-events-none"
+          style={{ background: "radial-gradient(circle, #7c3aed, transparent)" }} />
+        <div className="absolute -bottom-10 -left-10 w-48 h-48 rounded-full opacity-10 blur-3xl pointer-events-none"
+          style={{ background: "radial-gradient(circle, #06b6d4, transparent)" }} />
+        <div className="relative z-10">
+          <div className="flex items-center gap-2 mb-1">
+            <span className="status-dot status-online" />
+            <span className="text-xs text-slate-400 font-medium">{today} · {projects.length} scoping activities</span>
           </div>
-        </div>
-      </div>
-
-      {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <div className="group relative bg-white/95 dark:bg-dark-surface/95 backdrop-blur-2xl rounded-3xl p-8 shadow-soft hover:shadow-glow transition-all duration-400 border border-gray-100/80 dark:border-dark-muted/40 overflow-hidden">
-          <div className="absolute -top-10 -right-10 w-48 h-48 bg-gradient-to-br from-primary/10 via-accent/5 to-transparent rounded-full blur-3xl group-hover:scale-110 transition-transform duration-700"></div>
-          <div className="relative z-10">
-            <div className="flex items-center gap-3 mb-4">
-              <div className="w-3 h-3 rounded-full bg-gradient-to-r from-primary to-accent animate-pulse-slow"></div>
-              <p className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-widest">Total Projects</p>
-            </div>
-            <p className="text-6xl font-extrabold bg-gradient-to-br from-primary via-accent to-primary bg-clip-text text-transparent mb-3">{projects.length}</p>
-            <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400 font-semibold">
-              <span className="px-2 py-1 rounded-full bg-primary/10 text-primary">All time</span>
-            </div>
-          </div>
-        </div>
-
-        <div className="group relative bg-white/95 dark:bg-dark-surface/95 backdrop-blur-2xl rounded-3xl p-8 shadow-soft hover:shadow-glow transition-all duration-400 border border-gray-100/80 dark:border-dark-muted/40 overflow-hidden">
-          <div className="absolute -top-10 -right-10 w-48 h-48 bg-gradient-to-br from-accent/10 via-secondary/5 to-transparent rounded-full blur-3xl group-hover:scale-110 transition-transform duration-700"></div>
-          <div className="relative z-10">
-            <div className="flex items-center gap-3 mb-4">
-              <div className="w-3 h-3 rounded-full bg-gradient-to-r from-accent to-secondary animate-pulse-slow"></div>
-              <p className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-widest">This Week</p>
-            </div>
-            <p className="text-6xl font-extrabold bg-gradient-to-br from-accent via-secondary to-accent bg-clip-text text-transparent mb-3">
-              {projects.filter(p => {
-                const created = new Date(p.created_at);
-                const weekAgo = new Date();
-                weekAgo.setDate(weekAgo.getDate() - 7);
-                return created >= weekAgo;
-              }).length}
-            </p>
-            <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400 font-semibold">
-              <span className="px-2 py-1 rounded-full bg-accent/10 text-accent">Last 7 days</span>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Charts */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Complexity Bar */}
-        <div className="bg-white/95 dark:bg-dark-surface/95 backdrop-blur-2xl p-8 rounded-3xl shadow-soft border border-gray-100/80 dark:border-dark-muted/40 hover:shadow-glow transition-all duration-400">
-          <div className="flex items-center gap-3 mb-6">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-primary to-accent flex items-center justify-center shadow-lg">
-              <Folder className="w-5 h-5 text-white" />
-            </div>
-            <h2 className="text-xl font-bold text-gray-800 dark:text-gray-100">
-              Projects by Complexity
-            </h2>
-          </div>
-          <ResponsiveContainer width="100%" height={240}>
-            <BarChart data={complexityData}>
-              <XAxis dataKey="complexity" stroke="#9CA3AF" fontSize={13} fontWeight={600} />
-              <YAxis stroke="#9CA3AF" fontSize={13} allowDecimals={false} />
-              <Tooltip
-                contentStyle={{
-                  fontSize: "13px",
-                  backgroundColor: "rgba(255, 255, 255, 0.95)",
-                  border: "none",
-                  borderRadius: "12px",
-                  boxShadow: "0 4px 12px rgba(0,0,0,0.15)"
-                }}
-              />
-              <Bar dataKey="count" fill="url(#colorGradient)" radius={[8, 8, 0, 0]} />
-              <defs>
-                <linearGradient id="colorGradient" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#8b5cf6" />
-                  <stop offset="100%" stopColor="#6366f1" />
-                </linearGradient>
-              </defs>
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-
-        {/* Daily Line */}
-        <div className="bg-white/95 dark:bg-dark-surface/95 backdrop-blur-2xl p-8 rounded-3xl shadow-soft border border-gray-100/80 dark:border-dark-muted/40 hover:shadow-glow transition-all duration-400">
-          <div className="flex items-center gap-3 mb-6">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-accent to-secondary flex items-center justify-center shadow-lg">
-              <History className="w-5 h-5 text-white" />
-            </div>
-            <h2 className="text-xl font-bold text-gray-800 dark:text-gray-100">
-              Projects Timeline
-            </h2>
-          </div>
-          <ResponsiveContainer width="100%" height={240}>
-            <LineChart data={dailyData}>
-              <XAxis dataKey="day" stroke="#9CA3AF" fontSize={13} fontWeight={600} />
-              <YAxis stroke="#9CA3AF" fontSize={13} allowDecimals={false} />
-              <Tooltip
-                contentStyle={{
-                  fontSize: "13px",
-                  backgroundColor: "rgba(255, 255, 255, 0.95)",
-                  border: "none",
-                  borderRadius: "12px",
-                  boxShadow: "0 4px 12px rgba(0,0,0,0.15)"
-                }}
-              />
-              <Line
-                type="monotone"
-                dataKey="count"
-                stroke="#6366f1"
-                strokeWidth={3}
-                dot={{ r: 4, fill: "#6366f1", strokeWidth: 2, stroke: "#fff" }}
-                activeDot={{ r: 6, fill: "#ec4899", strokeWidth: 3, stroke: "#fff" }}
-              />
-            </LineChart>
-          </ResponsiveContainer>
-        </div>
-      </div>
-
-      {/* Quick Actions */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <Link
-          to="/projects"
-          className="group relative flex items-center justify-center gap-3 bg-gradient-to-r from-primary to-accent text-white py-4 px-6 rounded-2xl shadow-lg hover:shadow-glow-lg transition-all duration-300 overflow-hidden"
-        >
-          <div className="absolute inset-0 bg-gradient-to-r from-accent to-primary opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
-          <PlusCircle className="w-5 h-5 relative z-10 group-hover:rotate-90 transition-transform duration-300" />
-          <span className="relative z-10 font-semibold">Create New Project</span>
-        </Link>
-        <Link
-          to="/history"
-          className="group relative flex items-center justify-center gap-3 bg-gradient-to-r from-accent to-secondary text-white py-4 px-6 rounded-2xl shadow-lg hover:shadow-glow-lg transition-all duration-300 overflow-hidden"
-        >
-          <div className="absolute inset-0 bg-gradient-to-r from-secondary to-accent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
-          <History className="w-5 h-5 relative z-10 group-hover:scale-110 transition-transform duration-300" />
-          <span className="relative z-10 font-semibold">View Project History</span>
-        </Link>
-
-      </div>
-
-      {/* Recent Projects */}
-      <div className="bg-white dark:bg-dark-surface rounded-xl shadow-md border border-gray-200 dark:border-dark-muted p-6">
-        <div className="flex items-center gap-2 mb-4 justify-between">
-          <div className="flex items-center gap-2">
-            <Folder className="w-6 h-6 text-gray-500 dark:text-gray-400" />
-            <h3 className="text-lg font-semibold text-gray-700 dark:text-gray-100">
-              Recent Projects
-            </h3>
-          </div>
-        </div>
-
-        {projects.length === 0 ? (
-          <p className="text-gray-500 dark:text-gray-400">
-            No projects yet. Create one!
+          <h1 className="text-3xl font-extrabold text-white mb-1">Project Scoping Bot</h1>
+          <p className="text-slate-400 text-sm">
+            Welcome back, <span className="text-violet-400 font-semibold">{user?.username || "..."}</span>
           </p>
-        ) : (
-          <table className="min-w-full text-sm border border-gray-200 dark:border-dark-muted rounded-lg overflow-hidden">
-            <thead className="bg-gray-100 dark:bg-dark-muted text-gray-700 dark:text-gray-300">
-              <tr>
-                <th className="px-4 py-2 text-left">Name</th>
-                <th className="px-4 py-2 text-left">Domain</th>
-                <th className="px-4 py-2 text-left">Created</th>
-                <th className="px-4 py-2 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {[...projects]
-                .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
-                .slice(0, 30)
-                .map((p) => (
+        </div>
+      </div>
 
-                  <tr
-                    key={p.id}
-                    className="border-t border-gray-200 dark:border-dark-muted hover:bg-gray-50 dark:hover:bg-dark-background transition"
-                  >
-                    <td className="px-4 py-2 font-semibold">
-                      <Link
-                        to={`/exports/${p.id}?mode=draft`}
-                        className="text-primary hover:underline"
-                      >
-                        {p.name}
-                      </Link>
-                    </td>
-                    <td className="px-4 py-2 text-gray-500 dark:text-gray-400">
-                      {p.domain || "-"}
-                    </td>
-                    <td className="px-4 py-2 text-gray-500 dark:text-gray-400">
-                      {new Date(p.created_at).toLocaleDateString()}
-                    </td>
-                    <td className="px-4 py-2 flex items-center gap-3 justify-end">
-                      <Link
-                        to={`/exports/${p.id}?mode=draft`}
-                        className="flex items-center gap-1 text-primary hover:underline"
-                      >
-                        <Eye className="w-5 h-5" />
-                        View
-                      </Link>
-                      <Link
-                        to={`/projects/${p.id}`}
-                        className="flex items-center gap-1 text-emerald-600 hover:text-emerald-800 hover:underline transition"
-                        title="View project details and close project"
-                      >
-                        <Folder className="w-5 h-5" />
-                        Details
-                      </Link>
-                      <button
-                        onClick={() => handleDelete(p.id)}
-                        className="flex items-center gap-1 text-red-600 hover:text-red-800 transition"
-                      >
-                        <Trash2 className="w-5 h-5" />
-                        Delete
-                      </button>
-                    </td>
-                  </tr>
-                ))}
+      {/* ── Stats + Right Panel ── */}
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-5">
 
-            </tbody>
-          </table>
-        )}
+        <div className="xl:col-span-2 space-y-5">
+
+          {/* Stat Cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            {[
+              { label: "Total Projects", value: projects.length, icon: <Folder className="w-4 h-4" />, color: "#7c3aed" },
+              { label: "This Week", value: weekProjects.length, icon: <TrendingUp className="w-4 h-4" />, color: "#06b6d4" },
+              { label: "Avg Accuracy", value: "93%", icon: <BarChart2 className="w-4 h-4" />, color: "#10b981" },
+            ].map((stat) => (
+              <div key={stat.label} className="rounded-2xl p-5 relative overflow-hidden"
+                style={{ background: "#131929", border: "1px solid rgba(255,255,255,0.06)" }}>
+                <div className="absolute -top-6 -right-6 w-24 h-24 rounded-full blur-2xl opacity-15"
+                  style={{ background: stat.color }} />
+                <div className="flex items-center gap-2 mb-3">
+                  <div className="w-7 h-7 rounded-lg flex items-center justify-center"
+                    style={{ background: `${stat.color}22`, color: stat.color }}>
+                    {stat.icon}
+                  </div>
+                  <span className="text-xs text-slate-500 font-semibold uppercase tracking-wider">{stat.label}</span>
+                </div>
+                <p className="text-4xl font-extrabold text-white">{stat.value}</p>
+              </div>
+            ))}
+          </div>
+
+          {/* Charts */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="rounded-2xl p-5" style={{ background: "#131929", border: "1px solid rgba(255,255,255,0.06)" }}>
+              <h3 className="text-sm font-semibold text-slate-300 mb-4">Projects by Complexity</h3>
+              <ResponsiveContainer width="100%" height={180}>
+                <BarChart data={complexityData} barSize={28}>
+                  <XAxis dataKey="complexity" stroke="#475569" fontSize={12} tick={{ fill: "#64748b" }} />
+                  <YAxis stroke="#475569" fontSize={12} allowDecimals={false} tick={{ fill: "#64748b" }} />
+                  <Tooltip contentStyle={tooltipStyle} cursor={{ fill: "rgba(124,58,237,0.08)" }} />
+                  <defs>
+                    <linearGradient id="barGrad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#7c3aed" />
+                      <stop offset="100%" stopColor="#06b6d4" />
+                    </linearGradient>
+                  </defs>
+                  <Bar dataKey="count" fill="url(#barGrad)" radius={[6, 6, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+            <div className="rounded-2xl p-5" style={{ background: "#131929", border: "1px solid rgba(255,255,255,0.06)" }}>
+              <h3 className="text-sm font-semibold text-slate-300 mb-4">Projects Timeline (Last 10 Days)</h3>
+              <ResponsiveContainer width="100%" height={180}>
+                <LineChart data={dailyData}>
+                  <XAxis dataKey="day" stroke="#475569" fontSize={11} tick={{ fill: "#64748b" }} />
+                  <YAxis stroke="#475569" fontSize={11} allowDecimals={false} tick={{ fill: "#64748b" }} />
+                  <Tooltip contentStyle={tooltipStyle} />
+                  <defs>
+                    <linearGradient id="lineGrad" x1="0" y1="0" x2="1" y2="0">
+                      <stop offset="0%" stopColor="#7c3aed" />
+                      <stop offset="100%" stopColor="#06b6d4" />
+                    </linearGradient>
+                  </defs>
+                  <Line type="monotone" dataKey="count"
+                    stroke="url(#lineGrad)" strokeWidth={2.5}
+                    dot={{ r: 4, fill: "#7c3aed", strokeWidth: 2, stroke: "#0a0d1a" }}
+                    activeDot={{ r: 6, fill: "#06b6d4", stroke: "#0a0d1a", strokeWidth: 2 }}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        </div>
+
+        {/* ── Right Panel ── */}
+        <div className="space-y-4">
+          {/* ScopeBot card */}
+          <div className="rounded-2xl p-5 text-center" style={{ background: "#131929", border: "1px solid rgba(255,255,255,0.06)" }}>
+            <div className="w-14 h-14 rounded-2xl mx-auto mb-3 flex items-center justify-center"
+              style={{ background: "linear-gradient(135deg, #7c3aed, #06b6d4)" }}>
+              <Zap className="w-7 h-7 text-white" />
+            </div>
+            <p className="font-semibold text-white mb-1">ScopeBot Assistant</p>
+            <p className="text-xs text-slate-400 mb-3">AI is healthy and ready to assist you.</p>
+            <div className="flex items-center justify-center gap-1.5 text-xs text-emerald-400">
+              <span className="status-dot status-online" />
+              <span>All systems operational</span>
+            </div>
+          </div>
+
+          {/* Quick Actions */}
+          <div className="rounded-2xl p-5 space-y-2" style={{ background: "#131929", border: "1px solid rgba(255,255,255,0.06)" }}>
+            <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">Quick Actions</h3>
+            {[
+              { label: "Create New Project", to: "/projects" },
+              { label: "Open Previous Scope", to: "/history" },
+            ].map((a) => (
+              <Link key={a.label} to={a.to}
+                className="flex items-center justify-between w-full px-4 py-3 rounded-xl text-sm font-medium text-slate-300 hover:text-white transition-all group"
+                style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.06)" }}>
+                <span>{a.label}</span>
+                <span className="text-slate-600 group-hover:text-violet-400 transition-colors">›</span>
+              </Link>
+            ))}
+          </div>
+
+          {/* AI Insights */}
+          <div className="rounded-2xl p-5" style={{ background: "#131929", border: "1px solid rgba(255,255,255,0.06)" }}>
+            <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">AI Insights</h3>
+            <div className="space-y-2.5">
+              <div className="flex items-center gap-2">
+                <span className="status-dot status-online" />
+                <span className="text-xs text-slate-400">Most Active Domain ·
+                  <span className="text-violet-400 font-semibold ml-1">{mostActiveDomain}</span>
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="status-dot" style={{ background: "#06b6d4" }} />
+                <span className="text-xs text-slate-400">Top Complexity ·
+                  <span className="text-cyan-400 font-semibold ml-1">{topComplexity}</span>
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Activity Feed + Recent Projects (side by side on xl) ── */}
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-5">
+
+        {/* Activity Feed */}
+        <div className="rounded-2xl overflow-hidden" style={{ background: "#131929", border: "1px solid rgba(255,255,255,0.06)" }}>
+          <div className="px-5 py-4" style={{ borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
+            <h2 className="text-sm font-semibold text-slate-200">Activity Feed</h2>
+            <p className="text-xs text-slate-500 mt-0.5">Recent events across your projects</p>
+          </div>
+          <div className="divide-y" style={{ borderColor: "rgba(255,255,255,0.04)" }}>
+            {activityFeed.length === 0 ? (
+              <div className="px-5 py-10 text-center text-slate-500 text-xs">No activity yet</div>
+            ) : activityFeed.map((event) => (
+              <div key={event.id} className="flex items-start gap-3 px-5 py-3.5 hover:bg-white/[0.02] transition-colors">
+                <div className="w-6 h-6 rounded-lg flex items-center justify-center shrink-0 mt-0.5"
+                  style={{ background: `${event.color}22`, color: event.color }}>
+                  {event.icon}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs text-slate-400 leading-relaxed">{event.text}</p>
+                  <div className="flex items-center gap-1 mt-1 text-slate-600 text-xs">
+                    <Clock className="w-3 h-3" />
+                    {relativeTime(event.time)}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Recent Projects Table */}
+        <div className="xl:col-span-2 rounded-2xl overflow-hidden" style={{ background: "#131929", border: "1px solid rgba(255,255,255,0.06)" }}>
+          <div className="flex items-center justify-between px-6 py-4" style={{ borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
+            <div>
+              <h2 className="text-sm font-semibold text-slate-200">Recent Projects</h2>
+              <p className="text-xs text-slate-500 mt-0.5">Latest {Math.min(projects.length, 30)} of {projects.length}</p>
+            </div>
+            <Link to="/projects" className="text-xs font-semibold text-violet-400 hover:text-violet-300 transition-colors">
+              + New Project
+            </Link>
+          </div>
+          {projects.length === 0 ? (
+            <div className="py-16 text-center text-slate-500 text-sm">No projects yet. Create one to get started.</div>
+          ) : (
+            <table className="w-full">
+              <thead>
+                <tr>
+                  <th className="px-5 py-3 text-left">PROJECT</th>
+                  <th className="px-5 py-3 text-left">DOMAIN</th>
+                  <th className="px-5 py-3 text-left hidden md:table-cell">CREATED</th>
+                  <th className="px-5 py-3 text-left hidden sm:table-cell">STATUS</th>
+                  <th className="px-5 py-3 text-right">ACTIONS</th>
+                </tr>
+              </thead>
+              <tbody>
+                {[...projects]
+                  .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+                  .slice(0, 30)
+                  .map((p) => (
+                    <tr key={p.id}>
+                      <td className="px-5 py-3 font-medium">
+                        <Link to={`/exports/${p.id}?mode=draft`} className="text-violet-400 hover:text-violet-300 transition-colors text-sm">
+                          {p.name || "Untitled"}
+                        </Link>
+                      </td>
+                      <td className="px-5 py-3">
+                        <span className="badge badge-primary text-xs">{p.domain || "—"}</span>
+                      </td>
+                      <td className="px-5 py-3 text-slate-500 text-xs hidden md:table-cell">
+                        {new Date(p.created_at).toLocaleDateString()}
+                      </td>
+                      <td className="px-5 py-3 hidden sm:table-cell">
+                        <StatusBadge status={p.status || "draft"} />
+                      </td>
+                      <td className="px-5 py-3 text-right">
+                        <div className="flex items-center justify-end gap-3">
+                          <Link to={`/exports/${p.id}?mode=draft`}
+                            className="text-xs text-slate-500 hover:text-violet-400 transition-colors flex items-center gap-1">
+                            <Eye className="w-3.5 h-3.5" /> View
+                          </Link>
+                          <Link to={`/projects/${p.id}`}
+                            className="text-xs text-slate-500 hover:text-cyan-400 transition-colors flex items-center gap-1">
+                            <Folder className="w-3.5 h-3.5" /> Details
+                          </Link>
+                          <button onClick={() => handleDelete(p.id)}
+                            className="text-xs text-slate-500 hover:text-red-400 transition-colors flex items-center gap-1">
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+              </tbody>
+            </table>
+          )}
+        </div>
       </div>
     </div>
   );

@@ -484,7 +484,7 @@ const ScopePreviewTabs = ({ activeTab, parsedDraft }) => {
                       let name = techStr;
                       let classification = null;
 
-                      const parensMatch = techStr.match(/^(.*?)\s*\((.*?)\)$/);
+                      const parensMatch = techStr.match(/^(.*?)\s*[\(\[](.*?)[\)\]]$/);
                       if (parensMatch && (parensMatch[2].toLowerCase().includes('explicit') || parensMatch[2].toLowerCase().includes('implicit'))) {
                         name = parensMatch[1].trim();
                         classification = parensMatch[2].trim();

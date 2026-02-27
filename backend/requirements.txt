@@ -26,7 +26,7 @@ azure-search-documents==11.5.3
 # --- AI & LLM ---
 openai==1.105.0
 tiktoken==0.11.0
-qdrant-client==1.7.1  # Vector database client
+qdrant-client==1.17.0  # Vector database client
 
 # --- AI Agents ---
 langgraph==0.2.45  # Agent orchestration framework
@@ -61,4 +61,4 @@ flake8
 black
 isort
 autoflake
-aiosqlite>=0.19.0
+aiosqlite>=0.19.0networkx==3.4.2

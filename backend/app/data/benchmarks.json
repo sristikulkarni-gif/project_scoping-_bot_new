@@ -1,0 +1,87 @@
+{
+    "general": {
+        "low": {
+            "min_months": 1,
+            "max_months": 3,
+            "min_cost_usd": 20000
+        },
+        "medium": {
+            "min_months": 3,
+            "max_months": 6,
+            "min_cost_usd": 50000
+        },
+        "high": {
+            "min_months": 6,
+            "max_months": 12,
+            "min_cost_usd": 150000
+        }
+    },
+    "data_platform": {
+        "low": {
+            "min_months": 3,
+            "max_months": 6,
+            "min_cost_usd": 100000
+        },
+        "medium": {
+            "min_months": 6,
+            "max_months": 12,
+            "min_cost_usd": 300000
+        },
+        "high": {
+            "min_months": 12,
+            "max_months": 24,
+            "min_cost_usd": 800000
+        }
+    },
+    "crm": {
+        "low": {
+            "min_months": 2,
+            "max_months": 4,
+            "min_cost_usd": 50000
+        },
+        "medium": {
+            "min_months": 4,
+            "max_months": 9,
+            "min_cost_usd": 150000
+        },
+        "high": {
+            "min_months": 9,
+            "max_months": 18,
+            "min_cost_usd": 400000
+        }
+    },
+    "mobile_app": {
+        "low": {
+            "min_months": 2,
+            "max_months": 4,
+            "min_cost_usd": 40000
+        },
+        "medium": {
+            "min_months": 4,
+            "max_months": 8,
+            "min_cost_usd": 100000
+        },
+        "high": {
+            "min_months": 8,
+            "max_months": 15,
+            "min_cost_usd": 300000
+        }
+    },
+    "web_application": {
+        "low": {
+            "min_months": 1,
+            "max_months": 3,
+            "min_cost_usd": 30000
+        },
+        "medium": {
+            "min_months": 3,
+            "max_months": 7,
+            "min_cost_usd": 80000
+        },
+        "high": {
+            "min_months": 7,
+            "max_months": 14,
+            "min_cost_usd": 250000
+        }
+    }
+}
